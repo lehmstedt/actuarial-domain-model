@@ -1,4 +1,3 @@
-@using Actuarial.Application.Persistence
 @inherits AppComponent
 
 <div class="page-head">
@@ -11,8 +10,9 @@
     <button @onclick="NewTemplate">New template…</button>
 </div>
 
-<div class="split">
-    @if (App.IsMobile)
+<div class="@(_editing ? "" : "split")">
+    @if (_editing) { }
+    else if (App.IsMobile)
     {
         <div class="m-picker">
             <select value="@(Selected?.Id.Value.ToString())" @onchange="e => Pick(new TemplateId(Guid.Parse(e.Value!.ToString()!)))" aria-label="Template">
@@ -34,26 +34,52 @@
     </div>
     }
     <div>
-        @if (_editing)
+        @if (_editing && _draft is not null)
         {
+            var problems = _draft.Problems();
+            string? closureError = null;
+            var closure = problems.Count == 0 ? Manifest(_draft.Build(), out closureError) : null;
             <div class="op-panel">
                 <div class="panel-head">
                     <h2>@_title</h2>
-                    <div class="row"><button @onclick="() => _editing = false">Cancel</button><button class="primary" @onclick="Publish">Publish</button></div>
+                    <div class="row"><button @onclick="() => _editing = false">Cancel</button><button class="primary" disabled="@(problems.Count > 0)" @onclick="Publish">Publish</button></div>
                 </div>
-                <p class="muted">Objects use <code>{"table": "&lt;table id&gt;"}</code> for the latest version, or add <code>"version": n</code> to pin one.
-                    Table ids are listed below the editor.</p>
+                <p class="muted">Folders hold collections or other folders; collections hold tables. A table can follow its latest
+                    version or be pinned to one. Use the label to show a table under another name, and add the same table
+                    more than once if it helps the reader.</p>
                 @if (_errors.Count > 0)
                 {
                     <div class="callout bad"><b>Publish refused.</b><ul>@foreach (var e in _errors) { <li>@e</li> }</ul></div>
                 }
-                <textarea class="code" spellcheck="false" @bind="_json"></textarea>
-                <details style="margin-top:8px"><summary class="muted">Table ids</summary>
-                    <table class="data list"><tbody>
-                    @foreach (var d in App.Service.Library.TableIds.Select(id => App.Service.Library.FindLatest(id)!).OrderBy(d => d.Name))
-                    { <tr><td class="left">@d.Name</td><td class="left mono">@d.Id.Value</td></tr> }
-                    </tbody></table>
-                </details>
+                <div class="grid ted-layout">
+                    <TemplateEditor Draft="_draft" OnChange="() => _errors.Clear()" />
+                    <div>
+                        <h4>Check</h4>
+                        @if (problems.Count > 0)
+                        {
+                            <div class="callout warn"><ul>@foreach (var p in problems) { <li>@p</li> }</ul></div>
+                        }
+                        else if (closure is null)
+                        {
+                            <div class="callout bad">@closureError</div>
+                        }
+                        else
+                        {
+                            <div class="callout ok">Ready to publish as v@(_draft.Version.Value).</div>
+                            <h4>Computed closure</h4>
+                            <p class="faint" style="font-size:12.5px">Every table these objects depend on is computed, shown or not.</p>
+                            var shownIds = _draft.All().Where(n => n.Table is not null).Select(n => n.Table!.Value).ToHashSet();
+                            <table class="data list"><tbody>
+                            @foreach (var (id, ver) in closure.Pinned.OrderBy(p => App.Service.Library.Get(p.Key, p.Value).Name))
+                            {
+                                <tr><td class="left">@App.Service.Library.Get(id, ver).Name</td>
+                                    <td class="left faint">v@(ver.Value)</td>
+                                    <td class="left">@if (!shownIds.Contains(id)) { <span class="badge">not shown</span> }</td></tr>
+                            }
+                            </tbody></table>
+                        }
+                    </div>
+                </div>
             </div>
         }
         else if (Selected is { } latest)
@@ -100,7 +126,8 @@
 
 @code {
     private bool _editing;
-    private string _json = "", _title = "";
+    private TemplateDraft? _draft;
+    private string _title = "";
     private List<string> _errors = new();
     private TemplateVersion? _version;
 
@@ -109,44 +136,36 @@
 
     private void Pick(TemplateId id) { App.LibraryTemplate = id; _version = null; _editing = false; }
 
-    private ResolvedManifest? Manifest(AnalysisTemplate t)
+    private ResolvedManifest? Manifest(AnalysisTemplate t) => Manifest(t, out _);
+
+    private ResolvedManifest? Manifest(AnalysisTemplate t, out string? error)
     {
-        try { return ManifestBuilder.Build(t, App.Service.Library); } catch (InvalidOperationException) { return null; }
+        error = null;
+        try { return ManifestBuilder.Build(t, App.Service.Library); }
+        catch (Exception e) when (e is InvalidOperationException or KeyNotFoundException) { error = e.Message; return null; }
     }
 
     private void Edit()
     {
         var d = App.Service.DraftNextTemplateVersion(Selected!.Id);
         _title = $"Publish {d.Name} v{d.Version.Value}";
-        _json = Json.Serialize(d, pretty: true);
+        _draft = TemplateDraft.From(d);
         _editing = true; _errors.Clear();
     }
 
     private void NewTemplate()
     {
-        var lib = App.Service.Library;
-        var tables = lib.TableIds.Select(id => lib.FindLatest(id)!).ToList();
-        ObjectNode O(TableDefinition d) => new(Guid.NewGuid(), d.Name, TableRef.Floating(d.Id));
-        var t = new AnalysisTemplate(new TemplateId(Guid.NewGuid()), new TemplateVersion(1), "Incurred focus",
-            new FolderNode(Guid.NewGuid(), "Incurred focus", new TemplateNode[]
-            {
-                new CollectionNode(Guid.NewGuid(), "Incurred", tables.Where(d => d.Name.StartsWith("Incurred")).Select(O).ToList()),
-            }));
         _title = "New template";
-        _json = Json.Serialize(t, pretty: true);
+        _draft = TemplateDraft.New("New template");
         _editing = true; _errors.Clear();
     }
 
     private void Publish()
     {
         _errors.Clear();
-        try
-        {
-            var t = ActuarialService.ParseTemplate(_json);
-            var r = App.Service.PublishTemplate(t);
-            if (r.Ok) { App.Toast($"Published {t.Name} v{t.Version.Value}."); App.LibraryTemplate = t.Id; _version = null; _editing = false; }
-            else _errors = r.Errors.ToList();
-        }
-        catch (UseCaseException e) { _errors.Add(e.Message); }
+        var t = _draft!.Build();
+        var r = App.Service.PublishTemplate(t);
+        if (r.Ok) { App.Toast($"Published {t.Name} v{t.Version.Value}."); App.LibraryTemplate = t.Id; _version = null; _editing = false; _draft = null; }
+        else _errors = r.Errors.ToList();
     }
 }

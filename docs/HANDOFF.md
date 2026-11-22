@@ -95,6 +95,10 @@ tests/Actuarial.Domain.Tests/                xUnit tests
   the valuation date is a month end inside the last exposure period. `TriangleStructure.Validate`, enforced by
   reshape and roll-forward. The app adds that the (quarterly) data needs multiples of 3.
 - **Templates** have a `TemplateLibrary`: versioned, published with tree checks, object resolution and a closure build.
+  They are edited in a form, not JSON: `TemplateDraft` (application layer) is a mutable working copy whose operations
+  (add, remove, reorder, move, duplicate, change table or pin) keep the tree well formed, and `Build()` turns it back
+  into an immutable `AnalysisTemplate` for `PublishTemplate`. Node ids are kept from the source version. The editor
+  shows draft problems and the computed closure live; publish remains the only gate.
 - **Version assignment.** The library allocates: a new table is v1, the next version is always latest + 1
   (`NextVersion`); publish refuses anything else. One version per table per batch.
 - **Sign-off** computes results and a SHA-256 hash over engine version, valuation date, structure, data hash, manifest,
