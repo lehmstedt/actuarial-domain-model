@@ -12,6 +12,16 @@
 </div>
 
 <div class="split">
+    @if (App.IsMobile)
+    {
+        <div class="m-picker">
+            <select value="@(Selected?.Id.Value.ToString())" @onchange="e => Pick(new TemplateId(Guid.Parse(e.Value!.ToString()!)))" aria-label="Template">
+                @foreach (var t in Latest) { <option value="@t.Id.Value">@t.Name (v@(t.Version.Value))</option> }
+            </select>
+        </div>
+    }
+    else
+    {
     <div class="panel tight">
         <ul class="tree">
             @foreach (var t in Latest)
@@ -22,6 +32,7 @@
             }
         </ul>
     </div>
+    }
     <div>
         @if (_editing)
         {

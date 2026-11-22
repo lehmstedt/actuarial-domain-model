@@ -80,7 +80,7 @@
             @foreach (var m in Def.SelectableMethods)
             {
                 var wk = new StateKey(Def.Id, SelectionTableDefinition.WeightColumn(m.Table.Table), null, null);
-                <label class="field" style="width:150px"><span>@Ctx.Name(m.Table.Table)</span>
+                <label class="field weight-field"><span>@Ctx.Name(m.Table.Table)</span>
                     @if (Ctx.Editable) { <input value="@Fmt.Input(Ctx.Manual(wk))" placeholder="1" @onchange="x => Ctx.SetAmount(wk, x.Value?.ToString())" /> }
                     else { <span>@Fmt.Input(Ctx.Manual(wk) ?? 1m)</span> }
                 </label>

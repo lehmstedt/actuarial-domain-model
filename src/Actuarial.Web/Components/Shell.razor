@@ -1,44 +1,73 @@
 @implements IDisposable
 @inject AppState App
 
-<div class="app">
-    <nav class="side">
-        <div class="brand"><span class="brand-mark">∑</span> Reserving Workbench</div>
-        @Item(Section.Dashboard, "Overview", null)
-        @Item(Section.Analyses, "Analyses", App.Workspace.Analyses.Select(a => a.Analysis.Id).Distinct().Count())
-        @if (App.AnalysisId is not null)
-        {
-            @Item(Section.Analysis, "↳ Open analysis", null)
-        }
-        @Item(Section.Library, "Table library", App.Service.Library.TableIds.Count())
-        @Item(Section.Templates, "Templates", App.Service.Templates.TemplateIds.Count())
-        @Item(Section.Data, "Segments & data", App.Workspace.Segments.Count)
-        @Item(Section.Audit, "Audit trail", App.Workspace.Audit.Count)
-        <div class="side-foot">
-            <label class="field"><span>Working as</span>
-                <input value="@App.Workspace.User" @onchange="SetUser" />
-            </label>
-            <div>Saved in this browser · @(App.StoredBytes / 1024) KB</div>
-        </div>
-    </nav>
+@if (App.IsMobile)
+{
+    <div class="m-app">
+        <header class="m-bar">
+            <span class="brand-mark">∑</span>
+            <span class="m-title">@Title</span>
+            <span class="m-user" title="Working as">@App.Workspace.User</span>
+        </header>
 
-    <main class="main">
-        @if (App.StorageWarning is not null)
+        <main class="main">
+            @Content
+        </main>
+
+        @if (_more)
         {
-            <div class="callout warn">@App.StorageWarning</div>
+            <div class="m-sheet-backdrop" @onclick="() => _more = false"></div>
+            <div class="m-sheet" role="dialog" aria-label="More">
+                <div class="m-sheet-grip"></div>
+                @MoreItem(Section.Templates, "Templates", App.Service.Templates.TemplateIds.Count())
+                @MoreItem(Section.Data, "Segments & data", App.Workspace.Segments.Count)
+                @MoreItem(Section.Audit, "Audit trail", App.Workspace.Audit.Count)
+                <label class="field" style="margin-top:12px"><span>Working as</span>
+                    <input value="@App.Workspace.User" @onchange="SetUser" />
+                </label>
+                <div class="muted" style="font-size:.8rem;margin-top:8px">Saved in this browser · @(App.StoredBytes / 1024) KB</div>
+            </div>
         }
-        @switch (App.Section)
-        {
-            case Section.Dashboard: <DashboardPage />; break;
-            case Section.Library: <LibraryPage />; break;
-            case Section.Templates: <TemplatesPage />; break;
-            case Section.Data: <DataPage />; break;
-            case Section.Analyses: <AnalysesPage />; break;
-            case Section.Analysis: <AnalysisPage />; break;
-            case Section.Audit: <AuditPage />; break;
-        }
-    </main>
-</div>
+
+        <nav class="m-tabs" aria-label="Sections">
+            @Tab(Section.Dashboard, "◎", "Overview")
+            @Tab(Section.Analyses, "☰", "Analyses")
+            @if (App.AnalysisId is not null) { @Tab(Section.Analysis, "▦", "Analysis") }
+            @Tab(Section.Library, "▤", "Library")
+            <button class="m-tab @(_more || App.Section is Section.Templates or Section.Data or Section.Audit ? "active" : "")" @onclick="() => _more = !_more">
+                <span class="m-ico">⋯</span><span>More</span>
+            </button>
+        </nav>
+    </div>
+}
+else
+{
+    <div class="app">
+        <nav class="side">
+            <div class="brand"><span class="brand-mark">∑</span> Reserving Workbench</div>
+            @Item(Section.Dashboard, "Overview", null)
+            @Item(Section.Analyses, "Analyses", App.Workspace.Analyses.Select(a => a.Analysis.Id).Distinct().Count())
+            @if (App.AnalysisId is not null)
+            {
+                @Item(Section.Analysis, "↳ Open analysis", null)
+            }
+            @Item(Section.Library, "Table library", App.Service.Library.TableIds.Count())
+            @Item(Section.Templates, "Templates", App.Service.Templates.TemplateIds.Count())
+            @Item(Section.Data, "Segments & data", App.Workspace.Segments.Count)
+            @Item(Section.Audit, "Audit trail", App.Workspace.Audit.Count)
+            <div class="side-foot">
+                <label class="field"><span>Working as</span>
+                    <input value="@App.Workspace.User" @onchange="SetUser" />
+                </label>
+                <div>Saved in this browser · @(App.StoredBytes / 1024) KB</div>
+            </div>
+        </nav>
+
+        <main class="main">
+            @Content
+        </main>
+    </div>
+}
 
 <div class="toasts" aria-live="polite">
     @foreach (var t in App.Toasts)
@@ -48,9 +77,40 @@
 </div>
 
 @code {
+    private bool _more;
+
     protected override void OnInitialized() => App.OnChange += Refresh;
     public void Dispose() => App.OnChange -= Refresh;
     private void Refresh() => InvokeAsync(StateHasChanged);
+
+    private string Title => App.Section switch
+    {
+        Section.Dashboard => "Reserving Workbench",
+        Section.Analyses => "Analyses",
+        Section.Analysis => "Analysis",
+        Section.Library => "Table library",
+        Section.Templates => "Templates",
+        Section.Data => "Segments & data",
+        _ => "Audit trail"
+    };
+
+    private RenderFragment Content => __builder =>
+    {
+        if (App.StorageWarning is not null)
+        {
+            <div class="callout warn">@App.StorageWarning</div>
+        }
+        switch (App.Section)
+        {
+            case Section.Dashboard: <DashboardPage />; break;
+            case Section.Library: <LibraryPage />; break;
+            case Section.Templates: <TemplatesPage />; break;
+            case Section.Data: <DataPage />; break;
+            case Section.Analyses: <AnalysesPage />; break;
+            case Section.Analysis: <AnalysisPage />; break;
+            case Section.Audit: <AuditPage />; break;
+        }
+    };
 
     private void SetUser(ChangeEventArgs e)
     {
@@ -59,11 +119,27 @@
         App.Changed();
     }
 
+    private void GoMobile(Section s) { _more = false; App.Go(s); }
+
     private RenderFragment Item(Section s, string label, int? count) => __builder =>
     {
         <button class="nav-item @(App.Section == s ? "active" : "")" @onclick="() => App.Go(s)">
             <span>@label</span>
             @if (count is not null) { <span class="nav-count">@count</span> }
+        </button>
+    };
+
+    private RenderFragment Tab(Section s, string icon, string label) => __builder =>
+    {
+        <button class="m-tab @(App.Section == s && !_more ? "active" : "")" @onclick="() => GoMobile(s)">
+            <span class="m-ico">@icon</span><span>@label</span>
+        </button>
+    };
+
+    private RenderFragment MoreItem(Section s, string label, int count) => __builder =>
+    {
+        <button class="nav-item @(App.Section == s ? "active" : "")" @onclick="() => GoMobile(s)">
+            <span>@label</span><span class="nav-count">@count</span>
         </button>
     };
 }

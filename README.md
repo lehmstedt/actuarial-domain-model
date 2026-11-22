@@ -19,6 +19,14 @@ Development: `dotnet build`, `dotnet test`, `dotnet run --project src/Actuarial.
 `.github/workflows/pages.yml` tests every push and publishes `./site` to GitHub Pages on pushes to the default branch.
 If the first deployment fails because Pages is off, set *Settings → Pages → Source* to **GitHub Actions** and re-run it.
 
+## Mobile
+
+On a phone (a viewport up to 760px wide, or a touch-first mobile device) the app switches to a mobile layout:
+an app bar and bottom tab bar instead of the sidebar, pickers instead of the long template and library lists,
+an *Actions…* menu for analysis operations, cards for the analyses list, 16px inputs (no iOS zoom on focus) and
+tables that scroll inside their panel with the row labels pinned. Detection runs before the first paint and follows
+resizes and rotation.
+
 ## Layout
 
 | Project | What it holds |

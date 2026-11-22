@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#205f8f" />
     <title>Reserving Workbench</title>
     <!-- Relative base: the app runs from any folder of any static host (or a file server), no rewrites needed. -->
     <base href="./" />
@@ -22,7 +23,28 @@
         An unexpected error occurred. <a href="" class="reload">Reload</a> <a class="dismiss">✕</a>
     </div>
     <script>
+        // Mobile detection: a phone-sized viewport, or a touch-first device that is not much wider.
+        // Sets <html data-device="mobile|desktop"> before the app starts so CSS applies from the first paint.
+        (function () {
+            const narrow = window.matchMedia("(max-width: 760px)");
+            const touch = window.matchMedia("(pointer: coarse)");
+            const ua = /Mobi|Android|iPhone|iPod/i.test(navigator.userAgent);
+            const detect = () => narrow.matches || (ua && touch.matches && window.innerWidth < 1024);
+            const apply = () => document.documentElement.dataset.device = detect() ? "mobile" : "desktop";
+            apply();
+            const listeners = [];
+            const changed = () => { apply(); listeners.forEach(l => l.invokeMethodAsync("SetMobile", detect())); };
+            narrow.addEventListener("change", changed);
+            window.actuarialDevice = { isMobile: detect, watch: ref => listeners.push(ref) };
+        })();
+
         window.actuarial = {
+            isMobile: function () { return window.actuarialDevice.isMobile(); },
+            watchDevice: function (ref) { window.actuarialDevice.watch(ref); },
+            scrollIntoView: function (selector) {
+                const el = document.querySelector(selector);
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+            },
             download: function (name, text) {
                 const blob = new Blob([text], { type: "application/json" });
                 const a = document.createElement("a");

@@ -40,6 +40,26 @@
     </div>
 }
 
+@if (App.IsMobile)
+{
+    @foreach (var g in Groups)
+    {
+        var latest = g[^1].Analysis;
+        var t = App.Service.Templates.Get(latest.Template, latest.TemplateVersion);
+        var needs = latest.Status == AnalysisStatus.Draft ? StateValidator.Missing(latest.State, latest.Structure, latest.Manifest, App.Service.Library).Count : 0;
+        <a class="m-card" @onclick="() => App.OpenAnalysis(latest.Id, latest.Revision)">
+            <div class="row between">
+                <span class="t">@App.Service.SegmentOf(latest.Segment).Name · @Fmt.Date(latest.ValuationDate)</span>
+                <span class="badge @(latest.Status == AnalysisStatus.SignedOff ? "signed" : "draft")">rev @latest.Revision · @(latest.Status == AnalysisStatus.SignedOff ? "signed off" : "draft")</span>
+            </div>
+            <div class="s">@t.Name v@(t.Version.Value) · @latest.Structure.ExposurePeriodCount × @(latest.Structure.ExposurePeriodLength.Months)m / @latest.Structure.DevelopmentPeriodCount × @(latest.Structure.DevelopmentPeriodLength.Months)m</div>
+            @if (g[0].Analysis.DerivedFrom is { } l) { <div class="s">@l.Operation of rev @l.SourceRevision</div> }
+            @if (needs > 0) { <div class="s" style="color:var(--warn)">@needs input(s) needed</div> }
+        </a>
+    }
+}
+else
+{
 <div class="panel">
     <table class="data list">
         <thead><tr>
@@ -47,9 +67,7 @@
             <th class="left">Revisions</th><th class="left">Lineage</th><th class="num">Needs input</th><th class="left">Created</th>
         </tr></thead>
         <tbody>
-        @foreach (var g in App.Workspace.Analyses.GroupBy(a => a.Analysis.Id)
-                     .Select(g => g.OrderBy(r => r.Analysis.Revision).ToList())
-                     .OrderBy(g => App.Service.SegmentOf(g[0].Analysis.Segment).Name).ThenByDescending(g => g[0].Analysis.ValuationDate))
+        @foreach (var g in Groups)
         {
             var latest = g[^1];
             var a = latest.Analysis;
@@ -84,9 +102,14 @@
         </tbody>
     </table>
 </div>
+}
 
 @code {
     private bool _creating;
+
+    private IEnumerable<List<AnalysisRecord>> Groups => App.Workspace.Analyses.GroupBy(a => a.Analysis.Id)
+        .Select(g => g.OrderBy(r => r.Analysis.Revision).ToList())
+        .OrderBy(g => App.Service.SegmentOf(g[0].Analysis.Segment).Name).ThenByDescending(g => g[0].Analysis.ValuationDate);
     private Guid _segment, _template;
     private string _valuation = "2025-12-31";
     private TriangleStructure? _structure;

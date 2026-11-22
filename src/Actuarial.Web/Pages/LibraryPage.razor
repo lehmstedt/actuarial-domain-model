@@ -22,6 +22,21 @@
 </div>
 
 <div class="split">
+    @if (App.IsMobile)
+    {
+        <div class="m-picker">
+            <select value="@(Selected?.Id.Value.ToString())" @onchange="e => Pick(new TableId(Guid.Parse(e.Value!.ToString()!)))" aria-label="Table">
+                @foreach (var g in Tables.GroupBy(t => t.KindLabel))
+                {
+                    <optgroup label="@g.Key">
+                        @foreach (var t in g) { <option value="@t.Id.Value">@t.Name (v@(t.Version.Value))</option> }
+                    </optgroup>
+                }
+            </select>
+        </div>
+    }
+    else
+    {
     <div class="panel tight">
         @foreach (var g in Tables.GroupBy(t => t.KindLabel))
         {
@@ -36,6 +51,7 @@
             </ul>
         }
     </div>
+    }
 
     <div>
         @if (_isNew || _editing)

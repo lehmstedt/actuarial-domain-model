@@ -38,9 +38,26 @@ public sealed class AppState
     /// <summary>Incremented on every change to the workspace; views cache computed results against it.</summary>
     public int Version { get; private set; }
 
+    /// <summary>True on phones (narrow viewport or touch-first mobile device). Pages switch to their mobile layout.</summary>
+    public bool IsMobile { get; private set; }
+
+    [JSInvokable]
+    public void SetMobile(bool mobile)
+    {
+        if (IsMobile == mobile) return;
+        IsMobile = mobile;
+        Changed();
+    }
+
     public AppState(IJSInProcessRuntime js)
     {
         _js = js;
+        try
+        {
+            IsMobile = js.Invoke<bool>("actuarial.isMobile");
+            js.InvokeVoid("actuarial.watchDevice", DotNetObjectReference.Create(this));
+        }
+        catch (JSException) { IsMobile = false; }
         Service = new ActuarialService(LoadOrSeed());
         Service.Changed += () => { Version++; Save(); };
     }

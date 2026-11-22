@@ -1,4 +1,5 @@
 @inherits AppComponent
+@inject IJSRuntime JS
 
 @if (Ctx is null)
 {
@@ -33,31 +34,47 @@
             <span class="muted">· @view.Template.Name v@(a.TemplateVersion.Value) · @a.Structure.Describe()</span>
         </div>
     </div>
-    <div class="row">
-        @if (Ctx.Editable)
-        {
-            <button @onclick='() => Toggle("template")'>Apply template</button>
-            <button @onclick='() => Toggle("reshape")'>Reshape</button>
-        }
-        <button @onclick='() => Toggle("roll")'>Roll forward</button>
-        <button @onclick='() => Toggle("duplicate")'>Duplicate</button>
-        @if (isLatest && a.Status == AnalysisStatus.SignedOff)
-        {
-            <button @onclick="Reopen">New revision</button>
-        }
-        @if (isLatest && upgrades.Count > 0)
-        {
-            <button @onclick='() => Toggle("upgrade")'>Upgrade (@upgrades.Count)</button>
-        }
-        @if (Ctx.Editable)
-        {
-            <button class="primary" @onclick='() => Toggle("sign")'>Sign off…</button>
-        }
-        @if (a.SignOff is not null)
-        {
-            <button class="primary" @onclick="Verify">Verify</button>
-        }
-    </div>
+    @if (App.IsMobile)
+    {
+        <select class="m-actions" value="" @onchange="MobileAction" aria-label="Actions">
+            <option value="">Actions…</option>
+            @if (Ctx.Editable) { <option value="template">Apply template</option><option value="reshape">Reshape</option> }
+            <option value="roll">Roll forward</option>
+            <option value="duplicate">Duplicate</option>
+            @if (isLatest && a.Status == AnalysisStatus.SignedOff) { <option value="reopen">New revision</option> }
+            @if (isLatest && upgrades.Count > 0) { <option value="upgrade">Upgrade (@upgrades.Count)</option> }
+            @if (Ctx.Editable) { <option value="sign">Sign off…</option> }
+            @if (a.SignOff is not null) { <option value="verify">Verify</option> }
+        </select>
+    }
+    else
+    {
+        <div class="row">
+            @if (Ctx.Editable)
+            {
+                <button @onclick='() => Toggle("template")'>Apply template</button>
+                <button @onclick='() => Toggle("reshape")'>Reshape</button>
+            }
+            <button @onclick='() => Toggle("roll")'>Roll forward</button>
+            <button @onclick='() => Toggle("duplicate")'>Duplicate</button>
+            @if (isLatest && a.Status == AnalysisStatus.SignedOff)
+            {
+                <button @onclick="Reopen">New revision</button>
+            }
+            @if (isLatest && upgrades.Count > 0)
+            {
+                <button @onclick='() => Toggle("upgrade")'>Upgrade (@upgrades.Count)</button>
+            }
+            @if (Ctx.Editable)
+            {
+                <button class="primary" @onclick='() => Toggle("sign")'>Sign off…</button>
+            }
+            @if (a.SignOff is not null)
+            {
+                <button class="primary" @onclick="Verify">Verify</button>
+            }
+        </div>
+    }
 </div>
 
 @if (!isLatest)
@@ -181,6 +198,44 @@
 }
 
 <div class="split">
+    @if (App.IsMobile)
+    {
+        <div class="m-picker">
+            <select value="@PickerValue" @onchange="PickTable" aria-label="Table">
+                @foreach (var (path, objs) in Groups(view.Template.Root, ""))
+                {
+                    <optgroup label="@path">
+                        @foreach (var o in objs)
+                        {
+                            <option value="@o.NodeId">@o.Name@(NeedsFor(o.Table.Table) is var n && n > 0 ? $"  ({n} needed)" : "")</option>
+                        }
+                    </optgroup>
+                }
+                @{ var hiddenM = a.Manifest.Pinned.Keys.Where(id => !view.Template.Objects().Any(o => o.Table.Table == id)).ToList(); }
+                @if (hiddenM.Count > 0)
+                {
+                    <optgroup label="Also computed">
+                        @foreach (var id in hiddenM) { <option value="t:@id.Value">@Ctx.Name(id)</option> }
+                    </optgroup>
+                }
+            </select>
+            <details class="m-details">
+                <summary>Analysis details</summary>
+                <dl class="kv">
+                    <dt>Data</dt><dd><span class="hash">@Fmt.Short(a.Data.ContentHash)</span></dd>
+                    <dt>Engine</dt><dd>@a.EngineVersion</dd>
+                    <dt>Exposure</dt><dd>@view.Exposures[0].Label – @view.Exposures[^1].Label</dd>
+                    <dt>Created</dt><dd>@Fmt.When(Ctx.View.Record.CreatedAt) · @Ctx.View.Record.CreatedBy</dd>
+                    @if (a.DerivedFrom is { } lm)
+                    {
+                        <dt>From</dt><dd><a @onclick="() => App.OpenAnalysis(lm.SourceAnalysis, lm.SourceRevision)">@lm.Operation of @Source(lm)</a></dd>
+                    }
+                </dl>
+            </details>
+        </div>
+    }
+    else
+    {
     <div>
         <div class="panel tight">
             <h4>@view.Template.Name</h4>
@@ -212,6 +267,7 @@
             </dl>
         </div>
     </div>
+    }
 
     <div>
         <div class="tabs">
@@ -389,6 +445,61 @@
         if (_op == "roll") _rollDate = LaterQuarterEnds(a.ValuationDate).Select(Fmt.Date).FirstOrDefault() ?? "";
         if (_op == "duplicate") _targetSegment = App.Workspace.Segments.FirstOrDefault(s => s.Id != a.Segment)?.Id.Value ?? a.Segment.Value;
         if (_op == "sign") _signUser = App.Workspace.User;
+    }
+
+    private string PickerValue
+    {
+        get
+        {
+            if (_node is { } n) return n.ToString();
+            if (Focused is not { } f) return "";
+            var o = Ctx!.View.Template.Objects().FirstOrDefault(x => x.Table.Table == f);
+            return o is not null ? o.NodeId.ToString() : $"t:{f.Value}";
+        }
+    }
+
+    /// <summary>Collections with their folder path ("Methods › Chain ladder"); the root folder is not part of the path.</summary>
+    private static IEnumerable<(string Path, IReadOnlyList<ObjectNode> Objects)> Groups(TemplateNode n, string path, bool root = true)
+    {
+        switch (n)
+        {
+            case FolderNode f:
+                var here = root ? path : (path.Length == 0 ? f.Name : $"{path} › {f.Name}");
+                foreach (var c in f.Children)
+                    foreach (var g in Groups(c, here, false))
+                        yield return g;
+                break;
+            case CollectionNode c:
+                yield return (path.Length == 0 ? c.Name : $"{path} › {c.Name}", c.Objects);
+                break;
+        }
+    }
+
+    private void PickTable(ChangeEventArgs e)
+    {
+        var v = e.Value?.ToString() ?? "";
+        if (v.StartsWith("t:") && Guid.TryParse(v[2..], out var g)) { FocusTable(new TableId(g)); _node = null; return; }
+        var o = Ctx!.View.Template.Objects().FirstOrDefault(x => x.NodeId.ToString() == v);
+        if (o is not null) Focus(o);
+    }
+
+    private void MobileAction(ChangeEventArgs e)
+    {
+        switch (e.Value?.ToString())
+        {
+            case "reopen": Reopen(); break;
+            case "verify": Verify(); break;
+            case { Length: > 0 } op: _op = null; Toggle(op); _scrollToPanel = true; break;
+        }
+    }
+
+    private bool _scrollToPanel;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!_scrollToPanel) return;
+        _scrollToPanel = false;
+        await JS.InvokeVoidAsync("actuarial.scrollIntoView", ".op-panel");
     }
 
     private void Focus(ObjectNode o) { _node = o.NodeId; App.FocusTable = o.Table.Table; _tab = "table"; }
