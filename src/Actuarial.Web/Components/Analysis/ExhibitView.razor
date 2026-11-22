@@ -1,0 +1,88 @@
+@{
+    var res = Ctx.Result(Def.Id);
+    var input = res?.Column("input");
+    var weight = res?.Column("weight");
+    var byDev = Def.ReducedGrain == GrainKind.DevelopmentPeriod;
+    var slots = byDev ? Ctx.Dev.Count : 1;
+}
+<div class="panel">
+    <div class="panel-head">
+        <div><span class="kind">Exhibit · @Ctx.Name(Def.Inputs[0].Source.Table).@Def.Inputs[0].ColumnKey@(Def.Inputs.Count > 1 ? $" weighted by {Ctx.Name(Def.Inputs[1].Source.Table)}.{Def.Inputs[1].ColumnKey}" : "")</span>
+            <h2>@Def.Name</h2></div>
+    </div>
+    @if (byDev)
+    {
+        <TriangleGrid Ctx="Ctx" Column="input" MaxHeight="360" />
+    }
+    else
+    {
+        <div class="table-wrap" style="max-height:340px"><table class="data">
+            <thead><tr><th class="rowh">Exposure</th><th>@Def.Inputs[0].ColumnKey</th>@if (weight is not null) { <th>weight</th> }</tr></thead>
+            <tbody>
+            @for (var e = 0; e < Ctx.Ex.Count; e++)
+            {
+                <tr><td class="rowh">@Ctx.Ex[e].Label</td><td>@Fmt.Num(input?.At(e, 0))</td>@if (weight is not null) { <td>@Fmt.Num(weight.At(e, 0))</td> }</tr>
+            }
+            </tbody>
+        </table></div>
+    }
+</div>
+
+<div class="panel">
+    <h3>Statistics</h3>
+    @if (Ctx.Editable) { <p class="muted">Click a statistic to select it. Custom statistics take a typed value.</p> }
+    <div class="table-wrap"><table class="data">
+        <thead><tr><th class="rowh">Statistic</th>
+            @for (var d = 0; d < slots; d++)
+            {
+                var k = Key(d);
+                <th>@(byDev ? Ctx.Dev[d].EndAge.ToString(CultureInfo.InvariantCulture) : "Value") @if (Ctx.Needs(k)) { <span class="dot">!</span> }</th>
+            }
+        </tr></thead>
+        <tbody>
+        @foreach (var s in Def.Statistics)
+        {
+            var col = res?.Column(s.Key);
+            <tr>
+                <td class="rowh">@s.Key <span class="faint">@s.Label</span></td>
+                @for (var d = 0; d < slots; d++)
+                {
+                    var di = d;
+                    var k = Key(d);
+                    var chosen = Ctx.Entry(k) is { Value: SelectedStatistic ss } && ss.StatisticKey == s.Key;
+                    if (s.Kind == StatisticKind.Custom && Ctx.Editable)
+                    {
+                        var ck = new StateKey(Def.Id, s.Key, null, byDev ? Ctx.Dev[di] : null);
+                        <td class="@(chosen ? "chosen" : "")">
+                            <input value="@Fmt.Input(col?.At(0, d))" @onchange="x => Ctx.SetAmount(ck, x.Value?.ToString())" />
+                            <button class="small ghost" @onclick="() => Pick(di, s)">use</button>
+                        </td>
+                    }
+                    else
+                    {
+                        <td class="@(Ctx.Editable ? "pick" : "") @(chosen ? "chosen" : "")" @onclick="() => Pick(di, s)">@Fmt.Num(col?.At(0, d))@if (chosen) { <span class="@Fmt.ProvClass(Ctx.Entry(k)!.Provenance)" title="@Fmt.Provenance(Ctx.Entry(k)!.Provenance)"></span> }</td>
+                    }
+                }
+            </tr>
+        }
+        <tr class="sel-row"><td class="rowh">Selected</td>
+            @for (var d = 0; d < slots; d++) { <td>@Fmt.Num(res?.Column(ExhibitDefinition.SelectedColumn)?.At(0, d))</td> }
+        </tr>
+        </tbody>
+    </table></div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AnalysisCtx Ctx { get; set; } = null!;
+    [Parameter, EditorRequired] public ExhibitTableDefinition Def { get; set; } = null!;
+
+    private StateKey Key(int d) => new(Def.Id, ExhibitDefinition.SelectedColumn, null, Def.ReducedGrain == GrainKind.DevelopmentPeriod ? Ctx.Dev[d] : null);
+
+    private void Pick(int d, StatisticSpec s)
+    {
+        if (!Ctx.Editable) return;
+        var k = Key(d);
+        if (Ctx.Entry(k) is { Value: SelectedStatistic cur } && cur.StatisticKey == s.Key) Ctx.Clear(k);
+        else Ctx.Select(k, new SelectedStatistic(s.Key));
+    }
+}

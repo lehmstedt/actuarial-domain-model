@@ -1,0 +1,75 @@
+@{
+    var res = Ctx.Result(Def.Id);
+}
+<div class="panel">
+    <div class="panel-head">
+        <div><span class="kind">Method table · ultimate column <code>@Def.UltimateColumnKey</code></span><h2>@Def.Name</h2></div>
+        @if (Ctx.Editable)
+        {
+            <button class="@(_override ? "primary" : "")" @onclick="() => _override = !_override">@(_override ? "Done" : "Override formulas")</button>
+        }
+    </div>
+    <div class="table-wrap">
+        <table class="data">
+            <thead><tr>
+                <th class="rowh">Exposure</th>
+                @foreach (var c in Def.Columns)
+                {
+                    <th title="@(c.Source is FormulaColumn f ? f.Expression : "Entered by the user")">
+                        @c.Label @(c.Key == Def.UltimateColumnKey ? "★" : "")
+                        <div class="faint mono" style="font-weight:400">@(c.Source is FormulaColumn f2 ? f2.Expression : "input")</div>
+                    </th>
+                }
+            </tr></thead>
+            <tbody>
+            @for (var e = 0; e < Ctx.Ex.Count; e++)
+            {
+                var ei = e;
+                <tr>
+                    <td class="rowh">@Ctx.Ex[e].Label</td>
+                    @foreach (var c in Def.Columns)
+                    {
+                        var k = new StateKey(Def.Id, c.Key, Ctx.Ex[ei], null);
+                        var v = res?.Column(c.Key)?.At(e, 0);
+                        var entry = Ctx.Entry(k);
+                        var isInput = c.Source is UserInputColumn;
+                        if (Ctx.Editable && (isInput || _override))
+                        {
+                            <td class="@(entry is not null && !isInput ? "override" : "")">
+                                <input value="@(isInput ? Fmt.Input(Ctx.Manual(k)) : Fmt.Input(v))" placeholder="@(Ctx.Needs(k) ? "needed" : "")"
+                                       style="@(Ctx.Needs(k) ? "border-color:var(--warn)" : "")"
+                                       @onchange="x => Ctx.SetAmount(k, x.Value?.ToString())" />
+                                @if (entry is not null) { <span class="@Fmt.ProvClass(entry.Provenance)" title="@Fmt.Provenance(entry.Provenance)"></span> }
+                            </td>
+                        }
+                        else
+                        {
+                            <td class="@(entry is not null && !isInput ? "override" : "") @(c.Key == Def.UltimateColumnKey ? "chosen" : "")" style="@(c.Key == Def.UltimateColumnKey ? "outline:none" : "")">
+                                @if (isInput && v is null && Ctx.Needs(k)) { <span class="dot">!</span> }
+                                @Fmt.Num(v, c.Measure)
+                                @if (entry is not null) { <span class="@Fmt.ProvClass(entry.Provenance)" title="@Fmt.Provenance(entry.Provenance)"></span> }
+                            </td>
+                        }
+                    }
+                </tr>
+            }
+            </tbody>
+            <tfoot><tr>
+                <td class="rowh">Total</td>
+                @foreach (var c in Def.Columns)
+                {
+                    var col = res?.Column(c.Key);
+                    var total = Fmt.Totals(c.Measure) || (c.Measure == MeasureKind.Other && Enumerable.Range(0, Ctx.Ex.Count).Any(e => Math.Abs(col?.At(e, 0) ?? 0) > 100));
+                    <td>@(total && col is not null ? Fmt.Num(Enumerable.Range(0, Ctx.Ex.Count).Sum(e => col.At(e, 0) ?? 0)) : "")</td>
+                }
+            </tr></tfoot>
+        </table>
+    </div>
+    @if (_override) { <div class="callout info" style="margin-top:10px">Overrides replace a formula's value for one exposure period and flow to every table that reads it. Clear a cell to restore the formula.</div> }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AnalysisCtx Ctx { get; set; } = null!;
+    [Parameter, EditorRequired] public MethodTableDefinition Def { get; set; } = null!;
+    private bool _override;
+}

@@ -1,0 +1,138 @@
+@{
+    var res = Ctx.Result(Def.Id);
+    var src = Ctx.Result(Def.Source.Table)?.Column(Def.SourceColumnKey);
+    var ata = res?.Column("ata");
+    var selected = res?.Column(ExhibitDefinition.SelectedColumn);
+    var cdf = res?.Column(DevelopmentExhibitDefinition.CdfColumn);
+    var nd = Ctx.Dev.Count;
+}
+<div class="panel">
+    <div class="panel-head">
+        <div><span class="kind">Development exhibit · source @Ctx.Name(Def.Source.Table).@Def.SourceColumnKey</span><h2>@Def.Name</h2></div>
+        <div class="seg">
+            <button class="@(_show == "factors" ? "on" : "")" @onclick='() => _show = "factors"'>Age-to-age factors</button>
+            <button class="@(_show == "source" ? "on" : "")" @onclick='() => _show = "source"'>Source triangle</button>
+        </div>
+    </div>
+    @if (_show == "source")
+    {
+        <TriangleGrid Ctx="Ctx" Column="src" Measure="MeasureKind.Paid" MaxHeight="380" />
+    }
+    else
+    {
+        <TriangleGrid Ctx="Ctx" Column="ata" Measure="MeasureKind.Factor" FactorLabels="true" FirstDev="1" HighlightDiagonal="false" MaxHeight="380" Corner="Exposure \ factor" />
+    }
+</div>
+
+<div class="panel">
+    <div class="panel-head">
+        <h3>Select factors</h3>
+        <div class="legend">
+            <span><span class="sw" style="background:var(--sel)"></span>selected</span>
+            <span><span class="prov carried"></span> carried forward</span>
+            <span><span class="prov remapped"></span> remapped</span>
+            <span><span class="dot">!</span> needs a selection</span>
+        </div>
+    </div>
+    @if (Ctx.Editable) { <p class="muted">Click a statistic to select it for that age, or use a row's ⇉ to select it for every age. Type in <i>Manual</i> to override.</p> }
+    <div class="table-wrap">
+        <table class="data">
+            <thead><tr>
+                <th class="rowh">Statistic</th>
+                @for (var d = 1; d < nd; d++)
+                {
+                    var k = Key(d);
+                    <th>@Ctx.Dev[d].Label @if (Ctx.Needs(k)) { <span class="dot">!</span> }</th>
+                }
+            </tr></thead>
+            <tbody>
+            @foreach (var s in Def.Statistics)
+            {
+                var col = res?.Column(s.Key);
+                <tr>
+                    <td class="rowh">
+                        <span title="@s.Kind">@s.Label</span>
+                        @if (Ctx.Editable && s.Kind != StatisticKind.Custom)
+                        {
+                            <button class="small ghost" title="Select for every age" @onclick="() => All(s)">⇉</button>
+                        }
+                    </td>
+                    @for (var d = 1; d < nd; d++)
+                    {
+                        var di = d;
+                        var k = Key(d);
+                        var chosen = Ctx.Entry(k) is { Value: SelectedStatistic ss } && ss.StatisticKey == s.Key;
+                        if (s.Kind == StatisticKind.Custom && Ctx.Editable)
+                        {
+                            var ck = new StateKey(Def.Id, s.Key, null, Ctx.Dev[di]);
+                            <td class="@(chosen ? "chosen" : "")"><input value="@Fmt.Input(col?.At(0, d))" @onchange="x => Ctx.SetAmount(ck, x.Value?.ToString())" @ondblclick="() => Pick(di, s)" /></td>
+                        }
+                        else
+                        {
+                            <td class="@(Ctx.Editable && col?.At(0, d) is not null ? "pick" : "") @(chosen ? "chosen" : "")" @onclick="() => Pick(di, s)">
+                                @Fmt.Num(col?.At(0, d), MeasureKind.Factor)@if (chosen) { <span class="@Fmt.ProvClass(Ctx.Entry(k)!.Provenance)" title="@Fmt.Provenance(Ctx.Entry(k)!.Provenance)"></span> }
+                            </td>
+                        }
+                    }
+                </tr>
+            }
+            @if (Ctx.Editable)
+            {
+                <tr>
+                    <td class="rowh">Manual</td>
+                    @for (var d = 1; d < nd; d++)
+                    {
+                        var k = Key(d);
+                        var manual = Ctx.Manual(k);
+                        <td class="@(manual is not null ? "chosen" : "")"><input value="@Fmt.Input(manual)" placeholder="—" @onchange="x => Ctx.SetAmount(k, x.Value?.ToString())" /></td>
+                    }
+                </tr>
+            }
+            <tr class="sel-row">
+                <td class="rowh">Selected</td>
+                @for (var d = 1; d < nd; d++)
+                {
+                    var e = Ctx.Entry(Key(d));
+                    <td>@Fmt.Num(selected?.At(0, d), MeasureKind.Factor)@if (e is not null) { <span class="@Fmt.ProvClass(e.Provenance)" title="@Fmt.Provenance(e.Provenance)"></span> }</td>
+                }
+            </tr>
+            <tr class="sel-row">
+                <td class="rowh">CDF to ultimate</td>
+                @for (var d = 1; d < nd; d++) { <td>@Fmt.Num(cdf?.At(0, d - 1), MeasureKind.Factor)</td> }
+            </tr>
+            </tbody>
+        </table>
+    </div>
+    <p class="faint" style="margin-top:6px">The CDF under factor <i>a–b</i> takes age <i>a</i> to ultimate. The last age's CDF is the tail: @Fmt.Num(cdf?.At(0, nd - 1), MeasureKind.Factor).</p>
+
+    @if (Def.IncludeTailFactor)
+    {
+        var tk = new StateKey(Def.Id, DevelopmentExhibitDefinition.TailColumn, null, null);
+        <div class="row">
+            <label class="field" style="max-width:220px"><span>Tail factor (beyond @Ctx.Dev[^1].EndAge months)</span>
+                @if (Ctx.Editable) { <input value="@Fmt.Input(Ctx.Manual(tk))" placeholder="1.0000" @onchange="x => Ctx.SetAmount(tk, x.Value?.ToString())" /> }
+                else { <span>@Fmt.Num(Ctx.Manual(tk) ?? 1m, MeasureKind.Factor)</span> }
+            </label>
+            @if (Ctx.Entry(tk) is { } te) { <span class="@Fmt.ProvClass(te.Provenance)" title="@Fmt.Provenance(te.Provenance)"></span> }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AnalysisCtx Ctx { get; set; } = null!;
+    [Parameter, EditorRequired] public DevelopmentExhibitDefinition Def { get; set; } = null!;
+    private string _show = "factors";
+
+    private StateKey Key(int d) => new(Def.Id, ExhibitDefinition.SelectedColumn, null, Ctx.Dev[d]);
+
+    private void Pick(int d, StatisticSpec s)
+    {
+        if (!Ctx.Editable) return;
+        var k = Key(d);
+        if (Ctx.Entry(k) is { Value: SelectedStatistic cur } && cur.StatisticKey == s.Key) Ctx.Clear(k);
+        else Ctx.Select(k, new SelectedStatistic(s.Key));
+    }
+
+    private void All(StatisticSpec s) =>
+        Ctx.SelectMany(Enumerable.Range(1, Ctx.Dev.Count - 1).Select(Key), new SelectedStatistic(s.Key), $"{s.Label} for every age");
+}

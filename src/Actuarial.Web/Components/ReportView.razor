@@ -1,0 +1,44 @@
+@inject AppState App
+
+<div class="report-cols" style="margin-top:8px">
+    <div>
+        <b style="color:var(--ok)">Carried · @Report.Carried.Count</b>
+        @List(Report.Carried)
+    </div>
+    <div>
+        <b style="color:var(--remapped)">Remapped · @Report.Remapped.Count</b>
+        @List(Report.Remapped)
+    </div>
+    <div>
+        <b style="color:var(--bad)">Dormant · @Report.Dormant.Count</b>
+        @List(Report.Dormant)
+    </div>
+    <div>
+        <b style="color:var(--warn)">Needs input · @Report.NeedsInput.Count</b>
+        <ul>
+            @foreach (var k in Report.NeedsInput.Take(Max)) { <li>@Describe(k)</li> }
+            @if (Report.NeedsInput.Count > Max) { <li class="faint">… @(Report.NeedsInput.Count - Max) more</li> }
+        </ul>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public MigrationReport Report { get; set; } = null!;
+    private const int Max = 40;
+
+    private string Describe(StateKey k)
+    {
+        var name = App.Service.TableName(k.Table);
+        var where = string.Join(" · ", new[] { k.Exposure?.Label, k.Development is { } d ? $"dev {d.Label}" : null }.Where(x => x is not null));
+        var col = k.ColumnKey.StartsWith("weight:") ? "weight" : k.ColumnKey;
+        return $"{name} / {col}{(where.Length > 0 ? " / " + where : "")}";
+    }
+
+    private RenderFragment List(IReadOnlyList<MigrationEntry> entries) => __builder =>
+    {
+        <ul>
+            @foreach (var e in entries.Take(Max)) { <li>@Describe(e.Key) <span class="faint">— @e.Detail</span></li> }
+            @if (entries.Count > Max) { <li class="faint">… @(entries.Count - Max) more</li> }
+        </ul>
+    };
+}

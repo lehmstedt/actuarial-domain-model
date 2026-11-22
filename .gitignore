@@ -1,0 +1,7 @@
+bin/
+obj/
+/site/
+*.user
+.vs/
+TestResults/
+.publish/

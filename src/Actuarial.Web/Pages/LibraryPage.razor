@@ -1,0 +1,234 @@
+@using Actuarial.Application.Persistence
+@inherits AppComponent
+
+<div class="page-head">
+    <div>
+        <h1>Table library</h1>
+        <p>Definitions are immutable: editing publishes a new version. Publishing is the only gate — it checks each
+           definition, that every reference resolves with the right column, grain, measure and basis, that there are no
+           cycles, and that floating references from other tables still hold against the new latest versions.
+           Existing analyses keep the versions they pinned.</p>
+    </div>
+    <div class="row">
+        <select @bind="_newKind">
+            <option value="input">Input table (formula)</option>
+            <option value="development">Development exhibit</option>
+            <option value="exhibit">Exhibit</option>
+            <option value="method">Method table</option>
+            <option value="selection">Selection table</option>
+        </select>
+        <button @onclick="NewTable">New table…</button>
+    </div>
+</div>
+
+<div class="split">
+    <div class="panel tight">
+        @foreach (var g in Tables.GroupBy(t => t.KindLabel))
+        {
+            <h4 style="margin-top:8px">@g.Key</h4>
+            <ul class="tree">
+                @foreach (var t in g)
+                {
+                    <li class="obj @(Selected?.Id == t.Id && !_isNew ? "active" : "")" @onclick="() => Pick(t.Id)">
+                        <span>@t.Name</span><span class="faint">v@(t.Version.Value)</span>
+                    </li>
+                }
+            </ul>
+        }
+    </div>
+
+    <div>
+        @if (_isNew || _editing)
+        {
+            <div class="op-panel">
+                <div class="panel-head">
+                    <h2>@(_isNew ? "New table" : $"Publish {Selected!.Name} v{App.Service.Library.NextVersion(Selected.Id).Value}")</h2>
+                    <div class="row">
+                        <button @onclick="Cancel">Cancel</button>
+                        <button class="primary" @onclick="Publish">Publish</button>
+                    </div>
+                </div>
+                <p class="muted">Edit the definition as JSON. Keep <code>$kind</code> first. Pasting an array publishes several tables atomically —
+                    use that for a breaking change together with the tables that depend on it.</p>
+                @if (_errors.Count > 0)
+                {
+                    <div class="callout bad"><b>Publish refused — nothing was changed.</b>
+                        <ul>@foreach (var e in _errors) { <li>@e</li> }</ul>
+                    </div>
+                }
+                <textarea class="code" spellcheck="false" @bind="_json"></textarea>
+            </div>
+        }
+        else if (Selected is { } def)
+        {
+            var versions = App.Service.Library.Versions(def.Id).ToList();
+            var shown = _version is { } v ? App.Service.Library.Get(def.Id, v) : def;
+            <div class="panel">
+                <div class="panel-head">
+                    <div>
+                        <span class="kind">@shown.KindLabel table</span>
+                        <h2>@shown.Name</h2>
+                    </div>
+                    <div class="row">
+                        <div class="seg">
+                            @foreach (var ver in versions)
+                            {
+                                <button class="@(shown.Version == ver.Version ? "on" : "")" @onclick="() => _version = ver.Version">v@(ver.Version.Value)</button>
+                            }
+                        </div>
+                        <button class="primary" @onclick="Edit">Edit → new version</button>
+                    </div>
+                </div>
+                <dl class="kv">
+                    <dt>Id</dt><dd class="mono">@shown.Id.Value</dd>
+                    <dt>Used in analyses</dt><dd>@UsedBy(shown)</dd>
+                </dl>
+            </div>
+
+            <div class="grid two">
+                <div class="panel">
+                    <h3>Output columns</h3>
+                    <table class="data list">
+                        <thead><tr><th class="left">Key</th><th class="left">Measure</th><th class="left">Basis</th><th class="left">Grain</th><th class="left">Entry</th></tr></thead>
+                        <tbody>
+                        @foreach (var c in shown.Output.Columns)
+                        {
+                            <tr><td class="left mono">@ColumnLabel(c.Key)</td><td class="left">@c.Measure</td><td class="left">@c.Basis</td><td class="left">@c.Grain</td>
+                                <td class="left muted">@(shown.AcceptsManualValue(c.Key) ? "values" : "")@(c.Key == ExhibitDefinition.SelectedColumn && shown is ExhibitDefinition ? " · statistic" : "")@(c.Key == SelectionTableDefinition.SelectedUltimate ? " · method / average" : "")</td></tr>
+                        }
+                        </tbody>
+                    </table>
+                    @if (shown is MethodTableDefinition m)
+                    {
+                        <h3 style="margin-top:14px">Columns</h3>
+                        <table class="data list">
+                            <thead><tr><th class="left">Key</th><th class="left">Label</th><th class="left">Source</th></tr></thead>
+                            <tbody>
+                            @foreach (var c in m.Columns)
+                            {
+                                <tr><td class="left mono">@c.Key @(c.Key == m.UltimateColumnKey ? "★" : "")</td><td class="left">@c.Label</td>
+                                    <td class="left mono">@(c.Source is FormulaColumn f ? f.Expression : "user input")</td></tr>
+                            }
+                            </tbody>
+                        </table>
+                    }
+                    @if (shown is ExhibitDefinition ex)
+                    {
+                        <h3 style="margin-top:14px">Statistics</h3>
+                        <div class="chips">@foreach (var s in ex.Statistics) { <span class="badge">@s.Key · @s.Label</span> }</div>
+                    }
+                </div>
+                <div class="panel">
+                    <h3>Reads from</h3>
+                    @if (shown.Requirements.Count == 0) { <p class="muted">Nothing — this table reads raw data.</p> }
+                    <ul style="padding-left:18px;margin:0 0 12px">
+                        @foreach (var r in shown.Requirements)
+                        {
+                            <li><a @onclick="() => Pick(r.Source.Table)">@App.Service.TableName(r.Source.Table)</a>
+                                <span class="mono">.@r.ColumnKey</span>
+                                <span class="faint">@(r.Source.IsFloating ? "latest" : $"pinned v{r.Source.Version!.Value.Value}") · @r.Grain@(r.Measure is { } me ? $" · {me}" : "")@(r.Basis is { } b ? $" · {b}" : "")</span></li>
+                        }
+                    </ul>
+                    <h3>Read by (latest versions)</h3>
+                    @{ var deps = App.Service.Library.Dependents(shown.Id).ToList(); }
+                    @if (deps.Count == 0) { <p class="muted">No table depends on this one.</p> }
+                    <ul style="padding-left:18px;margin:0">
+                        @foreach (var d in deps) { <li><a @onclick="() => Pick(d.Id)">@d.Name</a> <span class="faint">v@(d.Version.Value)</span></li> }
+                    </ul>
+                </div>
+            </div>
+            <div class="panel">
+                <h3>Definition (v@(shown.Version.Value))</h3>
+                <pre class="mono" style="white-space:pre-wrap;margin:0;max-height:420px;overflow:auto">@Json.Serialize(shown, pretty: true)</pre>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private bool _editing, _isNew;
+    private string _json = "", _newKind = "method";
+    private List<string> _errors = new();
+    private TableVersion? _version;
+
+    private IEnumerable<TableDefinition> Tables => App.Service.Library.TableIds
+        .Select(id => App.Service.Library.FindLatest(id)!).OrderBy(t => t.KindLabel).ThenBy(t => t.Name);
+
+    private TableDefinition? Selected => App.LibraryTable is { } id ? App.Service.Library.FindLatest(id) : Tables.FirstOrDefault();
+
+    private void Pick(TableId id) { App.LibraryTable = id; _version = null; _editing = _isNew = false; _errors.Clear(); }
+
+    private string ColumnLabel(string key) =>
+        key.StartsWith("weight:") && Guid.TryParse(key[7..], out var g) ? $"weight:{App.Service.TableName(new TableId(g))}" : key;
+
+    private string UsedBy(TableDefinition d)
+    {
+        var n = App.Workspace.Analyses.Count(a => a.Analysis.Manifest.Pinned.TryGetValue(d.Id, out var v) && v == d.Version);
+        return n == 0 ? "none" : $"{n} analysis revision{(n == 1 ? "" : "s")} pin this version";
+    }
+
+    private void Edit()
+    {
+        _json = Json.Serialize(App.Service.DraftNextVersion(Selected!.Id), pretty: true);
+        _editing = true; _isNew = false; _errors.Clear();
+    }
+
+    private void Cancel() { _editing = _isNew = false; _errors.Clear(); }
+
+    private void Publish()
+    {
+        _errors.Clear();
+        IReadOnlyList<TableDefinition> batch;
+        try { batch = ActuarialService.ParseTables(_json); }
+        catch (UseCaseException e) { _errors.Add(e.Message); return; }
+
+        var r = App.Service.PublishTables(batch);
+        if (r.Ok)
+        {
+            App.Toast($"Published {string.Join(", ", batch.Select(b => $"{b.Name} v{b.Version.Value}"))}.");
+            App.LibraryTable = batch.First().Id;
+            _editing = _isNew = false;
+            _version = null;
+        }
+        else
+        {
+            _errors = r.Errors.Select(e =>
+            {
+                var name = batch.FirstOrDefault(b => b.Id == e.Table)?.Name ?? App.Service.Library.Find(e.Table, e.Version)?.Name ?? e.Table.ToString();
+                return $"{name} v{e.Version.Value}: {e.Message}";
+            }).ToList();
+        }
+    }
+
+    private void NewTable()
+    {
+        var id = TableId.New();
+        var v1 = new TableVersion(1);
+        var paid = App.Service.Library.TableIds.Select(t => App.Service.Library.FindLatest(t)!).FirstOrDefault(t => t.Output.Find("paid") is not null)?.Id ?? id;
+        var prem = App.Service.Library.TableIds.Select(t => App.Service.Library.FindLatest(t)!).FirstOrDefault(t => t.Output.Find("premium") is { Grain: GrainKind.ExposurePeriod })?.Id ?? id;
+        var paidReq = new InputRequirement(TableRef.Floating(paid), "paid", GrainKind.DevelopmentCell, MeasureKind.Paid, BasisKind.Cumulative);
+        var premReq = new InputRequirement(TableRef.Floating(prem), "premium", GrainKind.ExposurePeriod, MeasureKind.Premium);
+        var methods = Tables.OfType<MethodTableDefinition>().Take(2).Select(m => new MethodRef(TableRef.Floating(m.Id), m.UltimateColumnKey)).ToList();
+
+        TableDefinition draft = _newKind switch
+        {
+            "input" => new InputTableDefinition(id, v1, "Paid loss ratio triangle", new FormulaSource("$1 / $2", new[] { paidReq, premReq }),
+                new TableSchema(new[] { new ColumnSchema("paid_lr", MeasureKind.Other, BasisKind.Cumulative, GrainKind.DevelopmentCell) })),
+            "development" => new DevelopmentExhibitDefinition(id, v1, "Paid development (alternative)", TableRef.Floating(paid), "paid",
+                new[] { new StatisticSpec("vwa_all", StatisticKind.VolumeWeightedAverage, null), new StatisticSpec("sa_5", StatisticKind.SimpleAverage, 5) }, true),
+            "exhibit" => new ExhibitTableDefinition(id, v1, "Paid-to-date ratios", new[] { paidReq },
+                new[] { new StatisticSpec("sa_5", StatisticKind.SimpleAverage, 5), new StatisticSpec("latest", StatisticKind.Latest, null) },
+                new TableSchema(new[] { "sa_5", "latest", "selected" }.Select(k => new ColumnSchema(k, MeasureKind.Paid, BasisKind.Cumulative, GrainKind.DevelopmentPeriod)).ToList())),
+            "selection" => new SelectionTableDefinition(id, v1, "Alternative selection", new[] { premReq }, new[] { AverageKind.Arithmetic }, methods),
+            _ => new MethodTableDefinition(id, v1, "Paid loss ratio method", new[]
+            {
+                new MethodColumn("premium", "Premium", new FormulaColumn("$1", new[] { premReq }), MeasureKind.Premium),
+                new MethodColumn("paid", "Paid to date", new FormulaColumn("latest($1)", new[] { paidReq }), MeasureKind.Paid),
+                new MethodColumn("load", "Load factor", new UserInputColumn(), MeasureKind.Other),
+                new MethodColumn("ultimate", "Ultimate", new FormulaColumn("max(paid, premium * load)", Array.Empty<InputRequirement>()), MeasureKind.Ultimate),
+            }, "ultimate"),
+        };
+        _json = Json.Serialize(draft, pretty: true);
+        _isNew = true; _editing = false; _errors.Clear();
+    }
+}

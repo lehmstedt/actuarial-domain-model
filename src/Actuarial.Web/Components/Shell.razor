@@ -1,0 +1,69 @@
+@implements IDisposable
+@inject AppState App
+
+<div class="app">
+    <nav class="side">
+        <div class="brand"><span class="brand-mark">∑</span> Reserving Workbench</div>
+        @Item(Section.Dashboard, "Overview", null)
+        @Item(Section.Analyses, "Analyses", App.Workspace.Analyses.Select(a => a.Analysis.Id).Distinct().Count())
+        @if (App.AnalysisId is not null)
+        {
+            @Item(Section.Analysis, "↳ Open analysis", null)
+        }
+        @Item(Section.Library, "Table library", App.Service.Library.TableIds.Count())
+        @Item(Section.Templates, "Templates", App.Service.Templates.TemplateIds.Count())
+        @Item(Section.Data, "Segments & data", App.Workspace.Segments.Count)
+        @Item(Section.Audit, "Audit trail", App.Workspace.Audit.Count)
+        <div class="side-foot">
+            <label class="field"><span>Working as</span>
+                <input value="@App.Workspace.User" @onchange="SetUser" />
+            </label>
+            <div>Saved in this browser · @(App.StoredBytes / 1024) KB</div>
+        </div>
+    </nav>
+
+    <main class="main">
+        @if (App.StorageWarning is not null)
+        {
+            <div class="callout warn">@App.StorageWarning</div>
+        }
+        @switch (App.Section)
+        {
+            case Section.Dashboard: <DashboardPage />; break;
+            case Section.Library: <LibraryPage />; break;
+            case Section.Templates: <TemplatesPage />; break;
+            case Section.Data: <DataPage />; break;
+            case Section.Analyses: <AnalysesPage />; break;
+            case Section.Analysis: <AnalysisPage />; break;
+            case Section.Audit: <AuditPage />; break;
+        }
+    </main>
+</div>
+
+<div class="toasts" aria-live="polite">
+    @foreach (var t in App.Toasts)
+    {
+        <div class="toast @(t.IsError ? "error" : "")">@t.Message</div>
+    }
+</div>
+
+@code {
+    protected override void OnInitialized() => App.OnChange += Refresh;
+    public void Dispose() => App.OnChange -= Refresh;
+    private void Refresh() => InvokeAsync(StateHasChanged);
+
+    private void SetUser(ChangeEventArgs e)
+    {
+        var v = e.Value?.ToString()?.Trim();
+        if (!string.IsNullOrEmpty(v)) App.Workspace.User = v;
+        App.Changed();
+    }
+
+    private RenderFragment Item(Section s, string label, int? count) => __builder =>
+    {
+        <button class="nav-item @(App.Section == s ? "active" : "")" @onclick="() => App.Go(s)">
+            <span>@label</span>
+            @if (count is not null) { <span class="nav-count">@count</span> }
+        </button>
+    };
+}

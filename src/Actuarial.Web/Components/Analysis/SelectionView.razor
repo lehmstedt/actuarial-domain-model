@@ -1,0 +1,115 @@
+@{
+    var res = Ctx.Result(Def.Id);
+    var selected = res?.Column(SelectionTableDefinition.SelectedUltimate);
+}
+<div class="panel">
+    <div class="panel-head">
+        <div><span class="kind">Selection table · per exposure period</span><h2>@Def.Name</h2></div>
+        <div class="legend">
+            <span><span class="sw" style="background:var(--sel)"></span>selected</span>
+            <span><span class="prov carried"></span> carried forward</span>
+            <span><span class="prov remapped"></span> remapped</span>
+        </div>
+    </div>
+    @if (Ctx.Editable) { <p class="muted">Click a method's ultimate or an average to select it for that exposure period. Use ⇉ to apply a column to every period, or type an amount in <i>Manual</i>.</p> }
+    <div class="table-wrap">
+        <table class="data">
+            <thead><tr>
+                <th class="rowh">Exposure</th>
+                @for (var i = 0; i < Def.Inputs.Count; i++) { <th>@Ctx.Name(Def.Inputs[i].Source.Table)</th> }
+                @foreach (var m in Def.SelectableMethods)
+                {
+                    var mv = new SelectedMethod(m.Table.Table);
+                    <th>@Ctx.Name(m.Table.Table) @if (Ctx.Editable) { <button class="small ghost" title="Select for every period" @onclick="() => All(mv)">⇉</button> }</th>
+                }
+                @foreach (var a in Def.Averages)
+                {
+                    var av = new SelectedAverage(a);
+                    <th>@a average @if (Ctx.Editable) { <button class="small ghost" title="Select for every period" @onclick="() => All(av)">⇉</button> }</th>
+                }
+                @if (Ctx.Editable) { <th>Manual</th> }
+                <th>Selected ultimate</th>
+                <th>Loss ratio</th>
+            </tr></thead>
+            <tbody>
+            @for (var e = 0; e < Ctx.Ex.Count; e++)
+            {
+                var ei = e;
+                var k = Key(e);
+                var entry = Ctx.Entry(k);
+                <tr>
+                    <td class="rowh">@Ctx.Ex[e].Label @if (Ctx.Needs(k)) { <span class="dot">!</span> }</td>
+                    @for (var i = 0; i < Def.Inputs.Count; i++) { <td>@Fmt.Num(res?.Column($"input:{i + 1}")?.At(e, 0))</td> }
+                    @foreach (var m in Def.SelectableMethods)
+                    {
+                        var val = new SelectedMethod(m.Table.Table);
+                        var chosen = entry?.Value == val;
+                        <td class="@(Ctx.Editable ? "pick" : "") @(chosen ? "chosen" : "")" @onclick="() => Pick(ei, val)">@Fmt.Num(res?.Column($"method:{m.Table.Table.Value:N}")?.At(e, 0))</td>
+                    }
+                    @foreach (var a in Def.Averages)
+                    {
+                        var val = new SelectedAverage(a);
+                        var chosen = entry?.Value == val;
+                        <td class="@(Ctx.Editable ? "pick" : "") @(chosen ? "chosen" : "")" @onclick="() => Pick(ei, val)">@Fmt.Num(res?.Column(SelectionTableDefinition.AverageColumn(a))?.At(e, 0))</td>
+                    }
+                    @if (Ctx.Editable)
+                    {
+                        <td class="@(entry?.Value is ManualValue ? "chosen" : "")"><input value="@Fmt.Input(Ctx.Manual(k))" placeholder="—" @onchange="x => Ctx.SetAmount(k, x.Value?.ToString())" /></td>
+                    }
+                    <td><b>@Fmt.Num(selected?.At(e, 0))</b>@if (entry is not null) { <span class="@Fmt.ProvClass(entry.Provenance)" title="@Fmt.Provenance(entry.Provenance)"></span> }</td>
+                    <td class="muted">@LossRatio(res, selected, e)</td>
+                </tr>
+            }
+            </tbody>
+            <tfoot><tr>
+                <td class="rowh">Total</td>
+                @for (var i = 0; i < Def.Inputs.Count; i++) { var c = res?.Column($"input:{i + 1}"); <td>@Sum(c)</td> }
+                @foreach (var m in Def.SelectableMethods) { <td>@Sum(res?.Column($"method:{m.Table.Table.Value:N}"))</td> }
+                @foreach (var a in Def.Averages) { <td>@Sum(res?.Column(SelectionTableDefinition.AverageColumn(a)))</td> }
+                @if (Ctx.Editable) { <td></td> }
+                <td>@Sum(selected)</td>
+                <td></td>
+            </tr></tfoot>
+        </table>
+    </div>
+
+    @if (Def.Averages.Contains(AverageKind.Weighted))
+    {
+        <h4 style="margin-top:14px">Weights for the weighted average</h4>
+        <div class="row">
+            @foreach (var m in Def.SelectableMethods)
+            {
+                var wk = new StateKey(Def.Id, SelectionTableDefinition.WeightColumn(m.Table.Table), null, null);
+                <label class="field" style="width:150px"><span>@Ctx.Name(m.Table.Table)</span>
+                    @if (Ctx.Editable) { <input value="@Fmt.Input(Ctx.Manual(wk))" placeholder="1" @onchange="x => Ctx.SetAmount(wk, x.Value?.ToString())" /> }
+                    else { <span>@Fmt.Input(Ctx.Manual(wk) ?? 1m)</span> }
+                </label>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AnalysisCtx Ctx { get; set; } = null!;
+    [Parameter, EditorRequired] public SelectionTableDefinition Def { get; set; } = null!;
+
+    private StateKey Key(int e) => new(Def.Id, SelectionTableDefinition.SelectedUltimate, Ctx.Ex[e], null);
+
+    private void Pick(int e, StateValue v)
+    {
+        if (!Ctx.Editable) return;
+        var k = Key(e);
+        if (Ctx.Entry(k)?.Value == v) Ctx.Clear(k); else Ctx.Select(k, v);
+    }
+
+    private void All(StateValue v) => Ctx.SelectMany(Enumerable.Range(0, Ctx.Ex.Count).Select(Key), v, "Selection");
+
+    private string Sum(ColumnResult? c) => c is null ? "" : Fmt.Num(Enumerable.Range(0, Ctx.Ex.Count).Sum(e => c.At(e, 0) ?? 0));
+
+    private string LossRatio(TableResult? res, ColumnResult? sel, int e)
+    {
+        var prem = Def.Inputs.Select((r, i) => (r, i)).FirstOrDefault(x => x.r.Measure == MeasureKind.Premium);
+        if (prem.r is null || res?.Column($"input:{prem.i + 1}")?.At(e, 0) is not { } p || p == 0 || sel?.At(e, 0) is not { } u) return "";
+        return (u / p).ToString("0.0%", CultureInfo.InvariantCulture);
+    }
+}

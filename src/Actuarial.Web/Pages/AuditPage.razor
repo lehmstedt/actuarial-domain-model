@@ -1,0 +1,27 @@
+@inherits AppComponent
+
+<div class="page-head">
+    <div>
+        <h1>Audit trail</h1>
+        <p>Every publish, snapshot and analysis operation, with the migration report of what each operation carried,
+           remapped or made dormant. The trail is part of the saved workspace.</p>
+    </div>
+    <div class="seg">
+        @foreach (var f in new[] { "All", "Library", "Analyses" })
+        {
+            <button class="@(_filter == f ? "on" : "")" @onclick="() => _filter = f">@f</button>
+        }
+    </div>
+</div>
+<div class="panel">
+    <AuditList Events="Filtered" />
+</div>
+
+@code {
+    private string _filter = "All";
+    private IReadOnlyList<AuditEvent> Filtered => App.Workspace.Audit.AsEnumerable().Reverse()
+        .Where(e => _filter == "All"
+            || (_filter == "Library" && e.Kind is AuditKind.TablesPublished or AuditKind.PublishRejected or AuditKind.TemplatePublished)
+            || (_filter == "Analyses" && e.Analysis is not null))
+        .ToList();
+}

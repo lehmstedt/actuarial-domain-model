@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reserving Workbench</title>
+    <!-- Relative base: the app runs from any folder of any static host (or a file server), no rewrites needed. -->
+    <base href="./" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23205f8f'/%3E%3Cpath d='M6 24h20M6 24V8m0 16 6-6 5 3 9-10' stroke='white' stroke-width='2.5' fill='none'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="css/app.css" />
+</head>
+<body>
+    <div id="app">
+        <div class="boot">
+            <div class="boot-mark"></div>
+            <div>Loading the reserving workbench…</div>
+            <div class="boot-sub">The C# domain model runs in your browser (WebAssembly). Your work is saved in this browser.</div>
+        </div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unexpected error occurred. <a href="" class="reload">Reload</a> <a class="dismiss">✕</a>
+    </div>
+    <script>
+        window.actuarial = {
+            download: function (name, text) {
+                const blob = new Blob([text], { type: "application/json" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = name;
+                document.body.appendChild(a);
+                a.click();
+                setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+            }
+        };
+    </script>
+    <script src="_framework/blazor.webassembly.js"></script>
+</body>
+</html>

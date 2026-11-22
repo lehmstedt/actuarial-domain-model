@@ -1,0 +1,46 @@
+<div class="panel">
+    <div class="panel-head">
+        <div><span class="kind">Input table · @(Def.Source is DataSource ds ? $"claim data: {ds.ClaimField}" : "formula")</span><h2>@Def.Name</h2></div>
+        @if (Ctx.Editable)
+        {
+            <button class="@(_edit ? "primary" : "")" @onclick="() => _edit = !_edit">@(_edit ? "Done" : "Override cells")</button>
+        }
+    </div>
+    @if (Def.Source is FormulaSource f)
+    {
+        <p class="muted">Formula <code>@f.Expression</code> where @for (var i = 0; i < f.Refs.Count; i++) { var r = f.Refs[i]; <span><code>$@(i + 1)</code> = @Ctx.Name(r.Source.Table).@r.ColumnKey@(i < f.Refs.Count - 1 ? ", " : "")</span> }</p>
+    }
+    @if (_edit) { <div class="callout info">Type a value to override a cell (stored as an amount in the analysis, not in the table). Clear it to restore the computed value.</div> }
+    @foreach (var c in Def.Schema.Columns)
+    {
+        var col = Ctx.Result(Def.Id)?.Column(c.Key);
+        <h4 style="margin-top:6px">@c.Key · @c.Measure · @c.Basis</h4>
+        @if (c.Grain == GrainKind.DevelopmentCell)
+        {
+            <TriangleGrid Ctx="Ctx" Column="col" Measure="c.Measure" OverrideTable="Def.Id" OverrideColumn="@c.Key" Editing="_edit" />
+        }
+        else
+        {
+            <div class="table-wrap"><table class="data">
+                <thead><tr><th class="rowh">Exposure</th><th>@c.Key</th></tr></thead>
+                <tbody>
+                @for (var e = 0; e < Ctx.Ex.Count; e++)
+                {
+                    var k = new StateKey(Def.Id, c.Key, Ctx.Ex[e], null);
+                    <tr><td class="rowh">@Ctx.Ex[e].Label</td>
+                        @if (_edit) { <td><input value="@Fmt.Input(col?.At(e, 0))" @onchange="x => Ctx.SetAmount(k, x.Value?.ToString())" /></td> }
+                        else { <td class="@(Ctx.Entry(k) is not null ? "override" : "")">@Fmt.Num(col?.At(e, 0), c.Measure)</td> }
+                    </tr>
+                }
+                </tbody>
+                <tfoot><tr><td class="rowh">Total</td><td>@Fmt.Num(Enumerable.Range(0, Ctx.Ex.Count).Sum(e => col?.At(e, 0) ?? 0))</td></tr></tfoot>
+            </table></div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AnalysisCtx Ctx { get; set; } = null!;
+    [Parameter, EditorRequired] public InputTableDefinition Def { get; set; } = null!;
+    private bool _edit;
+}

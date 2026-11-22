@@ -1,0 +1,503 @@
+@inherits AppComponent
+
+@if (Ctx is null)
+{
+    <div class="empty">Choose an analysis from the <a @onclick="() => App.Go(Section.Analyses)">analyses list</a>.</div>
+    return;
+}
+@{
+    var a = Ctx.A;
+    var view = Ctx.View;
+    var upgrades = App.Service.UpgradesAvailable(a);
+    var isLatest = App.Service.IsLatestRevision(a);
+    var revisions = App.Service.Revisions(a.Id).ToList();
+}
+
+<div class="page-head">
+    <div>
+        <div class="muted"><a @onclick="() => App.Go(Section.Analyses)">Analyses</a> /</div>
+        <h1>@view.Segment.Name · @Fmt.Date(a.ValuationDate)
+            <span class="badge @(a.Status == AnalysisStatus.SignedOff ? "signed" : "draft")">@(a.Status == AnalysisStatus.SignedOff ? "Signed off" : "Draft")</span>
+        </h1>
+        <div class="row">
+            <span class="muted">Revision</span>
+            <div class="seg">
+                @foreach (var r in revisions)
+                {
+                    var rr = r.Analysis;
+                    <button class="@(rr.Revision == a.Revision ? "on" : "")" @onclick="() => App.OpenAnalysis(rr.Id, rr.Revision)">
+                        @rr.Revision @(rr.Status == AnalysisStatus.SignedOff ? "✓" : "")
+                    </button>
+                }
+            </div>
+            <span class="muted">· @view.Template.Name v@(a.TemplateVersion.Value) · @a.Structure.Describe()</span>
+        </div>
+    </div>
+    <div class="row">
+        @if (Ctx.Editable)
+        {
+            <button @onclick='() => Toggle("template")'>Apply template</button>
+            <button @onclick='() => Toggle("reshape")'>Reshape</button>
+        }
+        <button @onclick='() => Toggle("roll")'>Roll forward</button>
+        <button @onclick='() => Toggle("duplicate")'>Duplicate</button>
+        @if (isLatest && a.Status == AnalysisStatus.SignedOff)
+        {
+            <button @onclick="Reopen">New revision</button>
+        }
+        @if (isLatest && upgrades.Count > 0)
+        {
+            <button @onclick='() => Toggle("upgrade")'>Upgrade (@upgrades.Count)</button>
+        }
+        @if (Ctx.Editable)
+        {
+            <button class="primary" @onclick='() => Toggle("sign")'>Sign off…</button>
+        }
+        @if (a.SignOff is not null)
+        {
+            <button class="primary" @onclick="Verify">Verify</button>
+        }
+    </div>
+</div>
+
+@if (!isLatest)
+{
+    <div class="callout warn">This is revision @a.Revision; revision @revisions[^1].Analysis.Revision is the current one. Older revisions stay exactly as they were.</div>
+}
+@if (a.SignOff is { } so)
+{
+    <div class="callout ok">
+        Signed off by <b>@so.User</b> on @Fmt.When(so.At). Results shown are the materialised snapshot
+        <span class="hash" title="@so.Results.Hash">@Fmt.Short(so.Results.Hash)</span> computed by @so.Results.EngineVersion — nothing on this page can change.
+        @if (_verification is { } v)
+        {
+            <div style="margin-top:6px">
+                @if (v.Matches) { <b>✓ Verified:</b> <span>recomputing from the pinned definitions, data snapshot and state reproduces the hash exactly.</span> }
+                else { <b style="color:var(--bad)">✗ Verification failed:</b> <span>recomputed @Fmt.Short(v.RecomputedHash)</span> }
+            </div>
+        }
+    </div>
+}
+@if (upgrades.Count > 0 && isLatest && _op != "upgrade")
+{
+    <div class="callout info">Newer table versions exist: @string.Join(", ", upgrades.Select(u => $"{u.Name} v{u.Pinned.Value} → v{u.Latest.Value}")).
+        This analysis keeps its pinned versions until you upgrade, which creates a new revision.</div>
+}
+
+@if (_op is not null)
+{
+    <div class="op-panel">
+        @switch (_op)
+        {
+            case "template":
+                <h3>Apply a template</h3>
+                <p class="muted">The template changes what is shown. Tables already pinned keep their version; only newly needed tables resolve to the latest.
+                    State of tables that leave the analysis goes dormant and comes back if a later template includes them again.</p>
+                <div class="row">
+                    <select @bind="_templateId">
+                        @foreach (var t in App.Service.Templates.TemplateIds.Select(id => App.Service.Templates.FindLatest(id)!))
+                        { <option value="@t.Id.Value">@t.Name (v@(t.Version.Value))</option> }
+                    </select>
+                    <button class="primary" @onclick="ApplyTemplate">Apply</button>
+                    <button @onclick="() => _op = null">Cancel</button>
+                </div>
+                break;
+
+            case "reshape":
+                <h3>Reshape the triangle</h3>
+                <p class="muted">In place. Selections follow their periods: same period → carried; a categorical choice fans out to shorter periods or merges into a longer one only when all parts agree; amounts never split or merge. Anything else goes dormant, so reshaping back restores it.</p>
+                <StructureEditor Valuation="a.ValuationDate" Initial="a.Structure" Changed="s => _structure = s" />
+                <div class="row" style="margin-top:10px">
+                    <button class="primary" @onclick="Reshape">Reshape</button>
+                    <button @onclick="() => _op = null">Cancel</button>
+                </div>
+                break;
+
+            case "roll":
+                <h3>Roll forward</h3>
+                <p class="muted">Creates a new analysis at a later valuation date with one more diagonal. Template and table pins carry over; selections carry by period identity and are marked as carried forward for review.</p>
+                <div class="form-grid">
+                    <label class="field"><span>New valuation date</span>
+                        <select @bind="_rollDate">
+                            @foreach (var d in LaterQuarterEnds(a.ValuationDate)) { <option value="@Fmt.Date(d)">@Fmt.Date(d)</option> }
+                        </select>
+                    </label>
+                    <label class="field"><span>Growth</span>
+                        <select @bind="_growth">
+                            <option value="@GrowthMode.Grow">Grow — keep the first period, add new ones</option>
+                            <option value="@GrowthMode.Slide">Slide — keep the counts, drop the oldest</option>
+                        </select>
+                    </label>
+                    <button class="primary" @onclick="RollForward">Roll forward</button>
+                    <button @onclick="() => _op = null">Cancel</button>
+                </div>
+                break;
+
+            case "duplicate":
+                <h3>Duplicate onto a segment</h3>
+                <p class="muted">Same valuation date, any segment (including this one). The copy is a new draft that reads the target segment's data; selections come along as carried forward.</p>
+                <div class="row">
+                    <select @bind="_targetSegment">
+                        @foreach (var s in App.Workspace.Segments) { <option value="@s.Id.Value">@s.Name</option> }
+                    </select>
+                    <button class="primary" @onclick="Duplicate">Duplicate</button>
+                    <button @onclick="() => _op = null">Cancel</button>
+                </div>
+                break;
+
+            case "upgrade":
+                <h3>Upgrade to the latest definitions</h3>
+                <p class="muted">Upgrading never changes this revision. It creates revision @(revisions[^1].Analysis.Revision + 1) with the latest table and template versions; selections that no longer fit go dormant with a reason.</p>
+                <ul>@foreach (var u in upgrades) { <li>@u.Name: v@(u.Pinned.Value) → v@(u.Latest.Value)</li> }</ul>
+                <div class="row">
+                    <button class="primary" @onclick="Upgrade">Create upgraded revision</button>
+                    <button @onclick="() => _op = null">Cancel</button>
+                </div>
+                break;
+
+            case "sign":
+                <h3>Sign off</h3>
+                <p class="muted">Computes the results, hashes them together with the pinned manifest, data hash, state and engine version, and freezes the analysis. Dormant state is kept but not hashed.</p>
+                @if (view.NeedsInput.Count > 0)
+                {
+                    <div class="callout warn">@view.NeedsInput.Count selection(s) or input(s) are still open. You can sign off anyway; the gaps are recorded in the audit trail.</div>
+                }
+                <div class="row">
+                    <label class="field"><span>Signed off by</span><input @bind="_signUser" /></label>
+                    <button class="primary" @onclick="SignOff">Sign off</button>
+                    <button @onclick="() => _op = null">Cancel</button>
+                </div>
+                break;
+        }
+    </div>
+}
+
+@if (App.LastReport is { } report)
+{
+    <div class="panel" style="border-color:var(--sel-line)">
+        <div class="panel-head"><h3>@App.LastReportTitle</h3><button class="small" @onclick="() => { App.LastReport = null; }">Dismiss</button></div>
+        <ReportView Report="report" />
+    </div>
+}
+
+<div class="split">
+    <div>
+        <div class="panel tight">
+            <h4>@view.Template.Name</h4>
+            <TemplateTree Template="view.Template" ActiveNode="_node" OnSelect="Focus" Badge="NeedsFor" Note="ProblemFor" />
+            @{ var hidden = a.Manifest.Pinned.Keys.Where(id => !view.Template.Objects().Any(o => o.Table.Table == id)).ToList(); }
+            @if (hidden.Count > 0)
+            {
+                <h4 style="margin-top:12px">Also computed</h4>
+                <ul class="tree">
+                    @foreach (var id in hidden)
+                    {
+                        <li class="obj @(_node is null && Focused == id ? "active" : "")" @onclick="() => FocusTable(id)">
+                            <span>@Ctx.Name(id)</span>@if (NeedsFor(id) is var n && n > 0) { <span class="dot">@n</span> }
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+        <div class="panel tight">
+            <dl class="kv">
+                <dt>Data</dt><dd><span class="hash" title="@a.Data.ContentHash">@Fmt.Short(a.Data.ContentHash)</span></dd>
+                <dt>Engine</dt><dd>@a.EngineVersion</dd>
+                <dt>Exposure</dt><dd>@view.Exposures[0].Label – @view.Exposures[^1].Label</dd>
+                <dt>Created</dt><dd>@Fmt.When(Ctx.View.Record.CreatedAt) · @Ctx.View.Record.CreatedBy</dd>
+                @if (a.DerivedFrom is { } l)
+                {
+                    <dt>From</dt><dd><a @onclick="() => App.OpenAnalysis(l.SourceAnalysis, l.SourceRevision)">@l.Operation of @Source(l)</a></dd>
+                }
+            </dl>
+        </div>
+    </div>
+
+    <div>
+        <div class="tabs">
+            <button class="@(_tab == "table" ? "on" : "")" @onclick='() => _tab = "table"'>@(Focused is { } f ? Ctx.Name(f) : "Table")</button>
+            <button class="@(_tab == "needs" ? "on" : "")" @onclick='() => _tab = "needs"'>Needs input (@view.NeedsInput.Count)</button>
+            <button class="@(_tab == "state" ? "on" : "")" @onclick='() => _tab = "state"'>State (@a.State.Count)</button>
+            <button class="@(_tab == "dormant" ? "on" : "")" @onclick='() => _tab = "dormant"'>Dormant (@a.Dormant.Count)</button>
+            <button class="@(_tab == "manifest" ? "on" : "")" @onclick='() => _tab = "manifest"'>Manifest</button>
+            <button class="@(_tab == "history" ? "on" : "")" @onclick='() => _tab = "history"'>History</button>
+        </div>
+
+        @switch (_tab)
+        {
+            case "table":
+                if (Focused is { } tid && Ctx.Result(tid) is { } tr)
+                {
+                    foreach (var p in tr.Problems) { <div class="callout warn">@p</div> }
+                    switch (Ctx.Def(tid))
+                    {
+                        case InputTableDefinition d: <InputView Ctx="Ctx" Def="d" />; break;
+                        case DevelopmentExhibitDefinition d: <DevelopmentView Ctx="Ctx" Def="d" />; break;
+                        case ExhibitTableDefinition d: <ExhibitView Ctx="Ctx" Def="d" />; break;
+                        case MethodTableDefinition d: <MethodView Ctx="Ctx" Def="d" />; break;
+                        case SelectionTableDefinition d: <SelectionView Ctx="Ctx" Def="d" />; break;
+                    }
+                }
+                break;
+
+            case "needs":
+                <div class="panel">
+                    @if (view.NeedsInput.Count == 0) { <div class="empty">Every selection and input this analysis expects is present.</div> }
+                    @foreach (var g in view.NeedsInput.GroupBy(k => k.Table))
+                    {
+                        <div class="row between"><h3 style="margin:8px 0 4px">@Ctx.Name(g.Key)</h3><button class="small" @onclick="() => FocusTable(g.Key)">Open table</button></div>
+                        <div class="chips">@foreach (var k in g) { <span class="badge">@Where(k)</span> }</div>
+                    }
+                </div>
+                break;
+
+            case "state":
+                <div class="panel">
+                    <p class="muted">Everything the user decided in this analysis, keyed by meaning (table, column, period identity) rather than position.</p>
+                    <div class="table-wrap" style="max-height:640px">
+                        <table class="data list">
+                            <thead><tr><th class="left">Table / column / period</th><th class="left">Value</th><th class="left">Provenance</th><th></th></tr></thead>
+                            <tbody>
+                            @foreach (var (k, e) in a.State.OrderBy(s => Ctx.Name(s.Key.Table)).ThenBy(s => s.Key.ColumnKey).ThenBy(s => s.Key.Exposure?.Start).ThenBy(s => s.Key.Development?.AgeMonths))
+                            {
+                                <tr>
+                                    <td class="left">@App.Service.Describe(k, a.Manifest)</td>
+                                    <td class="left">@App.Service.Describe(e.Value)</td>
+                                    <td class="left"><span class="@Fmt.ProvClass(e.Provenance)"></span> @e.Provenance.Kind @(e.Provenance.From is { } fr ? Source(new Lineage(Operation.RollForward, fr, e.Provenance.FromRevision ?? 1)) : "")</td>
+                                    <td>@if (Ctx.Editable) { <button class="small ghost" @onclick="() => Ctx.Clear(k)">Clear</button> }</td>
+                                </tr>
+                            }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                break;
+
+            case "dormant":
+                <div class="panel">
+                    <p class="muted">State that no longer maps onto this analysis. It is never deleted: every later operation retries it, so it comes back when its table, period or statistic does.</p>
+                    @if (a.Dormant.Count == 0) { <div class="empty">Nothing is dormant.</div> }
+                    else
+                    {
+                        <table class="data list">
+                            <thead><tr><th class="left">Table / column / period</th><th class="left">Value</th><th class="left">Why it is dormant</th></tr></thead>
+                            <tbody>
+                            @foreach (var (k, d) in a.Dormant.OrderBy(s => App.Service.TableName(s.Key.Table)).ThenBy(s => s.Key.Exposure?.Start).ThenBy(s => s.Key.Development?.AgeMonths))
+                            {
+                                <tr><td class="left">@App.Service.Describe(k, a.Manifest)</td><td class="left">@App.Service.Describe(d.Entry.Value)</td><td class="left muted">@d.Reason</td></tr>
+                            }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+                break;
+
+            case "manifest":
+                <div class="panel">
+                    <p class="muted">The exact definition versions this analysis computes with: the template's full dependency closure, one version per table.</p>
+                    <table class="data list">
+                        <thead><tr><th class="left">Table</th><th class="left">Kind</th><th class="left">Pinned</th><th class="left">Latest</th><th class="left">In template</th></tr></thead>
+                        <tbody>
+                        @foreach (var (id, v) in a.Manifest.Pinned.OrderBy(p => Ctx.Name(p.Key)))
+                        {
+                            var latest = App.Service.Library.Latest(id)!.Value;
+                            <tr>
+                                <td class="left"><a @onclick="() => App.OpenLibraryTable(id)">@Ctx.Name(id)</a></td>
+                                <td class="left muted">@Ctx.Def(id).KindLabel</td>
+                                <td class="left">v@(v.Value)</td>
+                                <td class="left">@if (latest.Value > v.Value) { <span class="badge info">v@(latest.Value) available</span> } else { <span class="faint">same</span> }</td>
+                                <td class="left">@(view.Template.Objects().Count(o => o.Table.Table == id) is var n && n > 0 ? (n > 1 ? $"shown {n}×" : "shown") : "dependency only")</td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+                break;
+
+            case "history":
+                <div class="panel">
+                    <h3>Derived analyses</h3>
+                    @{ var derived = App.Workspace.Analyses.Where(r => r.Analysis.DerivedFrom is { } dl && dl.SourceAnalysis == a.Id && dl.Operation != Operation.NewRevision).ToList(); }
+                    @if (derived.Count == 0) { <p class="muted">None yet.</p> }
+                    <ul>
+                        @foreach (var r in derived)
+                        {
+                            var ra = r.Analysis;
+                            <li><a @onclick="() => App.OpenAnalysis(ra.Id, ra.Revision)">@ra.DerivedFrom!.Operation → @App.Service.SegmentOf(ra.Segment).Name @Fmt.Date(ra.ValuationDate) rev @ra.Revision</a> <span class="faint">from rev @ra.DerivedFrom.SourceRevision</span></li>
+                        }
+                    </ul>
+                    <h3 style="margin-top:12px">Audit events</h3>
+                    <AuditList Events="App.Workspace.Audit.Where(e => e.Analysis == a.Id).Reverse().ToList()" />
+                </div>
+                break;
+        }
+    </div>
+</div>
+
+@code {
+    private string? _op;
+    private string _tab = "table";
+    private Guid? _node;
+    private Guid _templateId, _targetSegment;
+    private string _rollDate = "";
+    private GrowthMode _growth = GrowthMode.Grow;
+    private string _signUser = "";
+    private TriangleStructure? _structure;
+    private VerificationResult? _verification;
+
+    private AnalysisCtx? _ctx;
+    private (AnalysisId, int, int) _cacheKey;
+
+    private AnalysisCtx? Ctx
+    {
+        get
+        {
+            if (App.AnalysisId is not { } id) return null;
+            var key = (id, App.AnalysisRevision, App.Version);
+            if (_ctx is null || _cacheKey != key)
+            {
+                if (_ctx is not null && (_ctx.A.Id != id || _ctx.A.Revision != App.AnalysisRevision)) { _verification = null; _op = null; }
+                try { _ctx = new AnalysisCtx(App, App.Service.Open(id, App.AnalysisRevision)); }
+                catch (UseCaseException) { _ctx = null; return null; }
+                _cacheKey = key;
+            }
+            return _ctx;
+        }
+    }
+
+    private TableId? Focused
+    {
+        get
+        {
+            var c = Ctx!;
+            if (App.FocusTable is { } f && c.A.Manifest.Pinned.ContainsKey(f)) return f;
+            return c.View.Template.Objects().FirstOrDefault()?.Table.Table;
+        }
+    }
+
+    protected override void OnStarted()
+    {
+        _targetSegment = App.Workspace.Segments.FirstOrDefault()?.Id.Value ?? Guid.Empty;
+        _signUser = App.Workspace.User;
+    }
+
+    private void Toggle(string op)
+    {
+        _op = _op == op ? null : op;
+        var a = Ctx!.A;
+        if (_op == "template") _templateId = a.Template.Value;
+        if (_op == "roll") _rollDate = LaterQuarterEnds(a.ValuationDate).Select(Fmt.Date).FirstOrDefault() ?? "";
+        if (_op == "duplicate") _targetSegment = App.Workspace.Segments.FirstOrDefault(s => s.Id != a.Segment)?.Id.Value ?? a.Segment.Value;
+        if (_op == "sign") _signUser = App.Workspace.User;
+    }
+
+    private void Focus(ObjectNode o) { _node = o.NodeId; App.FocusTable = o.Table.Table; _tab = "table"; }
+    private void FocusTable(TableId id)
+    {
+        _node = Ctx!.View.Template.Objects().FirstOrDefault(o => o.Table.Table == id)?.NodeId;
+        App.FocusTable = id; _tab = "table";
+    }
+
+    private int NeedsFor(TableId id) => Ctx!.View.NeedsInput.Count(k => k.Table == id);
+    private string? ProblemFor(TableId id) => Ctx!.Result(id)?.Problems.Count > 0 && NeedsFor(id) == 0 ? "incomplete" : null;
+
+    private string Where(StateKey k)
+    {
+        var parts = new[] { k.ColumnKey == SelectionTableDefinition.SelectedUltimate || k.ColumnKey == ExhibitDefinition.SelectedColumn ? null : k.ColumnKey, k.Exposure?.Label, k.Development is { } d ? $"factor {d.Label}" : null };
+        var s = string.Join(" · ", parts.Where(p => p is not null));
+        return s.Length == 0 ? "selection" : s;
+    }
+
+    private string Source(Lineage l)
+    {
+        var r = App.Workspace.Analyses.FirstOrDefault(x => x.Analysis.Id == l.SourceAnalysis && x.Analysis.Revision == l.SourceRevision);
+        return r is null ? "another analysis" : $"{App.Service.SegmentOf(r.Analysis.Segment).Name} {Fmt.Date(r.Analysis.ValuationDate)} rev {l.SourceRevision}";
+    }
+
+    private IEnumerable<DateOnly> LaterQuarterEnds(DateOnly after)
+    {
+        var end = App.Workspace.Warehouse.DataThrough;
+        var list = new List<DateOnly>();
+        for (var d = end; d > after; d = new DateOnly(d.Year, d.Month, 1).AddMonths(-2).AddDays(-1)) list.Add(d);
+        list.Reverse();
+        return list;
+    }
+
+    private void ApplyTemplate()
+    {
+        var a = Ctx!.A;
+        MigrationReport? r = null;
+        if (App.Try(() => r = App.Service.ApplyTemplate(a, new TemplateId(_templateId)), "Template applied."))
+        {
+            App.ShowReport("Template applied — what happened to the state", r!);
+            _op = null; _node = null;
+        }
+    }
+
+    private void Reshape()
+    {
+        if (_structure is null) return;
+        var a = Ctx!.A;
+        MigrationReport? r = null;
+        if (App.Try(() => r = App.Service.Reshape(a, _structure), "Triangle reshaped."))
+        {
+            App.ShowReport("Reshaped — what happened to the state", r!);
+            _op = null;
+        }
+    }
+
+    private void RollForward()
+    {
+        var a = Ctx!.A;
+        OperationResult? r = null;
+        var date = DateOnly.Parse(_rollDate, CultureInfo.InvariantCulture);
+        if (App.Try(() => r = App.Service.RollForward(a, date, _growth), $"Rolled forward to {_rollDate}."))
+        {
+            App.ShowReport($"Rolled forward to {_rollDate} ({_growth})", r!.Report);
+            App.OpenAnalysis(r.Analysis.Id, r.Analysis.Revision);
+        }
+    }
+
+    private void Duplicate()
+    {
+        var a = Ctx!.A;
+        OperationResult? r = null;
+        if (App.Try(() => r = App.Service.Duplicate(a, new SegmentId(_targetSegment)), "Duplicated."))
+        {
+            App.ShowReport($"Duplicated onto {App.Service.SegmentOf(new SegmentId(_targetSegment)).Name}", r!.Report);
+            App.OpenAnalysis(r.Analysis.Id, r.Analysis.Revision);
+        }
+    }
+
+    private void Reopen()
+    {
+        var a = Ctx!.A;
+        OperationResult? r = null;
+        if (App.Try(() => r = App.Service.NewRevision(a, upgrade: false), "New draft revision created. The signed-off revision is unchanged."))
+            App.OpenAnalysis(r!.Analysis.Id, r.Analysis.Revision);
+    }
+
+    private void Upgrade()
+    {
+        var a = Ctx!.A;
+        OperationResult? r = null;
+        if (App.Try(() => r = App.Service.NewRevision(a, upgrade: true), "Upgraded revision created."))
+        {
+            App.ShowReport($"Revision {r!.Analysis.Revision}: upgraded to the latest definitions", r.Report);
+            App.OpenAnalysis(r.Analysis.Id, r.Analysis.Revision);
+        }
+    }
+
+    private void SignOff()
+    {
+        var a = Ctx!.A;
+        if (App.Try(() => App.Service.SignOff(a, string.IsNullOrWhiteSpace(_signUser) ? App.Workspace.User : _signUser.Trim()), "Signed off. Results are frozen."))
+            _op = null;
+    }
+
+    private void Verify()
+    {
+        var a = Ctx!.A;
+        App.Try(() => _verification = App.Service.Verify(a));
+    }
+}

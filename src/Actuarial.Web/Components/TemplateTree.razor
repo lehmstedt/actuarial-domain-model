@@ -1,0 +1,48 @@
+@inject AppState App
+
+<ul class="tree">
+    @Node(Template.Root, true)
+</ul>
+
+@code {
+    [Parameter, EditorRequired] public AnalysisTemplate Template { get; set; } = null!;
+    [Parameter] public Guid? ActiveNode { get; set; }
+    [Parameter] public EventCallback<ObjectNode> OnSelect { get; set; }
+    [Parameter] public Func<TableId, int>? Badge { get; set; }
+    [Parameter] public Func<TableId, string?>? Note { get; set; }
+
+    private RenderFragment Node(TemplateNode n, bool root = false) => __builder =>
+    {
+        switch (n)
+        {
+            case FolderNode f:
+                if (root)
+                {
+                    foreach (var c in f.Children) { @Node(c) }
+                }
+                else
+                {
+                    <li><div class="folder">📁 @f.Name</div>
+                        <ul>@foreach (var c in f.Children) { @Node(c) }</ul>
+                    </li>
+                }
+                break;
+            case CollectionNode c:
+                <li><div class="collection">@c.Name</div>
+                    <ul>@foreach (var o in c.Objects) { @Node(o) }</ul>
+                </li>
+                break;
+            case ObjectNode o:
+                var badge = Badge?.Invoke(o.Table.Table) ?? 0;
+                var note = Note?.Invoke(o.Table.Table);
+                <li class="obj @(ActiveNode == o.NodeId ? "active" : "")" @onclick="() => OnSelect.InvokeAsync(o)" title="@note">
+                    <span>@o.Name</span>
+                    <span class="row" style="gap:4px">
+                        @if (note is not null) { <span class="faint" style="font-size:11px">@note</span> }
+                        @if (badge > 0) { <span class="dot">@badge</span> }
+                    </span>
+                </li>
+                break;
+        }
+    };
+}

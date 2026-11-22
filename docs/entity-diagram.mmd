@@ -1,0 +1,96 @@
+erDiagram
+  TABLE_DEFINITION ||--o{ COLUMN_SCHEMA : exposes
+  TABLE_DEFINITION ||--o{ INPUT_REQUIREMENT : consumes
+  INPUT_REQUIREMENT }o--|| COLUMN_SCHEMA : must_satisfy
+  TABLE_DEFINITION {
+    guid TableId PK
+    int Version PK
+    string Kind
+    json Body
+  }
+  COLUMN_SCHEMA {
+    guid TableId FK
+    int Version FK
+    string Key
+    string Measure
+    string Basis
+    string Grain
+  }
+  INPUT_REQUIREMENT {
+    guid FromTable FK
+    int FromVersion FK
+    guid ToTable FK
+    int ToVersion "null = floating"
+    string ColumnKey
+    string Grain
+  }
+  TEMPLATE ||--o{ TEMPLATE_NODE : contains
+  TEMPLATE {
+    guid TemplateId PK
+    int Version PK
+  }
+  TEMPLATE_NODE {
+    guid NodeId PK
+    guid ParentId FK
+    string NodeType
+    guid TableId FK
+    int TableVersion
+  }
+  TEMPLATE_NODE }o--o| TABLE_DEFINITION : references
+  SEGMENT ||--o{ ANALYSIS : analysed_in
+  ANALYSIS }o--|| TEMPLATE : pins_version
+  ANALYSIS }o--|| TRIANGLE_STRUCTURE : uses
+  ANALYSIS }o--|| DATA_SNAPSHOT : reads
+  ANALYSIS ||--o{ MANIFEST_ENTRY : freezes
+  ANALYSIS ||--o{ ANALYSIS_STATE : owns
+  ANALYSIS ||--o{ DORMANT_STATE : keeps
+  ANALYSIS ||--o| RESULT_SNAPSHOT : signed_with
+  ANALYSIS |o--o{ ANALYSIS : derived_from
+  MANIFEST_ENTRY }o--|| TABLE_DEFINITION : pins
+  ANALYSIS {
+    guid AnalysisId PK
+    int Revision PK
+    date ValuationDate
+    string Status
+    string EngineVersion
+    string LineageOperation "nullable"
+    guid LineageSource "nullable"
+    int LineageRevision "nullable"
+  }
+  MANIFEST_ENTRY {
+    guid TableId FK
+    int Version FK
+  }
+  ANALYSIS_STATE {
+    guid TableId FK
+    string ColumnKey
+    date ExposureStart "nullable"
+    int ExposureMonths "nullable"
+    int DevAgeMonths "nullable"
+    int DevLengthMonths "nullable"
+    json Value
+    string Provenance
+  }
+  DORMANT_STATE {
+    guid TableId FK
+    string ColumnKey
+    json Key
+    json Value
+    string Reason
+  }
+  DATA_SNAPSHOT {
+    guid Id PK
+    date ValuationDate
+    string ContentHash
+  }
+  TRIANGLE_STRUCTURE {
+    date FirstExposureStart
+    int ExposurePeriods
+    int DevPeriods
+    int ExposureMonths
+    int DevMonths
+  }
+  RESULT_SNAPSHOT {
+    string Hash
+    json Cells
+  }

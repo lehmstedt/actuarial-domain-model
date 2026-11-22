@@ -1,0 +1,88 @@
+@inherits AppComponent
+
+<div class="page-head">
+    <div>
+        <h1>Overview</h1>
+        <p>A reserving workbench built on the actuarial domain model. Definitions (tables and templates) are immutable and
+           versioned; analyses pin the exact versions they use, own every selection and entered value, and freeze their
+           results when signed off.</p>
+    </div>
+    <div class="row">
+        <button @onclick="Export">Export workspace</button>
+        <label class="btn">Import… <InputFile OnChange="Import" accept=".json" style="display:none" /></label>
+        <button class="danger" @onclick="Reset">Reset demo</button>
+    </div>
+</div>
+
+<div class="grid cards">
+    <div class="stat"><div class="v">@Analyses.Select(a => a.Analysis.Id).Distinct().Count()</div><div class="l">analyses (@Analyses.Count revisions)</div></div>
+    <div class="stat"><div class="v">@Analyses.Count(a => a.Analysis.Status == AnalysisStatus.SignedOff)</div><div class="l">signed off</div></div>
+    <div class="stat"><div class="v">@App.Service.Library.TableIds.Count()</div><div class="l">library tables (@App.Service.Library.All.Count() versions)</div></div>
+    <div class="stat"><div class="v">@App.Workspace.Segments.Count</div><div class="l">segments</div></div>
+</div>
+
+<div class="grid two" style="margin-top:16px">
+    <div class="panel">
+        <div class="panel-head"><h2>Analyses that need attention</h2><a @onclick="() => App.Go(Section.Analyses)">All analyses →</a></div>
+        @{ var drafts = Latest.Where(r => r.Analysis.Status == AnalysisStatus.Draft).ToList(); }
+        @if (drafts.Count == 0) { <div class="empty">Every analysis is signed off.</div> }
+        else
+        {
+            <table class="data list">
+                <thead><tr><th class="left">Segment</th><th class="left">Valuation</th><th class="num">Needs input</th><th class="left">Upgrades</th></tr></thead>
+                <tbody>
+                @foreach (var r in drafts)
+                {
+                    var a = r.Analysis;
+                    var needs = StateValidator.Missing(a.State, a.Structure, a.Manifest, App.Service.Library).Count;
+                    var up = App.Service.UpgradesAvailable(a).Count;
+                    <tr>
+                        <td class="left"><a @onclick="() => App.OpenAnalysis(a.Id, a.Revision)">@App.Service.SegmentOf(a.Segment).Name</a></td>
+                        <td class="left">@Fmt.Date(a.ValuationDate) · rev @a.Revision</td>
+                        <td class="num">@if (needs > 0) { <span class="dot">@needs</span> } else { <span class="faint">—</span> }</td>
+                        <td class="left">@if (up > 0) { <span class="badge info">@up newer table version@(up > 1 ? "s" : "")</span> }</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <div class="panel">
+        <h2>Things to try</h2>
+        <ol style="margin:0;padding-left:20px;display:grid;gap:6px">
+            <li>Open the <b>2025 Motor draft</b>: it was rolled forward from the signed-off 2024 analysis. Selections came along (blue dots); the new age and the new accident year are listed under <i>Needs input</i>.</li>
+            <li>Pick factors in <b>Paid development</b> and see the chain ladder, BF and the selection update immediately.</li>
+            <li><b>Apply the "Paid only" template</b>: selections of hidden tables go dormant, not lost. Apply "Standard reserving" again and they come back.</li>
+            <li><b>Reshape</b> to quarterly exposure periods: categorical selections fan out, amounts go dormant with a reason. Reshape back to annual and they return.</li>
+            <li>Use <b>Upgrade</b>: Paid development v2 dropped the "latest" statistic, so ages that used it go dormant with the reason.</li>
+            <li>In the <b>Table library</b>, publish a breaking change (e.g. rename the paid column) and see publish refuse it.</li>
+            <li>Open the <b>signed-off 2024</b> analysis and <b>Verify</b>: the engine recomputes it from its pinned inputs and compares hashes.</li>
+        </ol>
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-head"><h2>Recent activity</h2><a @onclick="() => App.Go(Section.Audit)">Audit trail →</a></div>
+    <AuditList Events="App.Workspace.Audit.AsEnumerable().Reverse().Take(8).ToList()" />
+</div>
+
+@code {
+    private List<AnalysisRecord> Analyses => App.Workspace.Analyses;
+    private IEnumerable<AnalysisRecord> Latest => Analyses.GroupBy(a => a.Analysis.Id).Select(g => g.MaxBy(x => x.Analysis.Revision)!)
+        .OrderByDescending(r => r.Analysis.ValuationDate);
+
+    private void Export() => App.Download($"actuarial-workspace-{DateTime.Now:yyyyMMdd-HHmm}.json", App.ExportJson());
+
+    private async Task Import(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            using var reader = new StreamReader(e.File.OpenReadStream(20_000_000));
+            App.ImportJson(await reader.ReadToEndAsync());
+        }
+        catch (Exception ex) { App.Toast($"Import failed: {ex.Message}", true); }
+    }
+
+    private void Reset() => App.ResetDemo();
+}

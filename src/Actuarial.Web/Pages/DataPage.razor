@@ -1,0 +1,103 @@
+@inherits AppComponent
+
+<div class="page-head">
+    <div>
+        <h1>Segments &amp; data</h1>
+        <p>Raw claim data (synthetic, quarterly, @Fmt.Date(W.DataThrough) latest) is split into segments by attribute filters.
+           An analysis never reads the warehouse directly: it reads a frozen snapshot of its segment at its valuation date,
+           identified by a content hash.</p>
+    </div>
+</div>
+
+<div class="grid two">
+    <div class="panel">
+        <div class="panel-head"><h2>Segments</h2></div>
+        <table class="data list">
+            <thead><tr><th class="left">Name</th><th class="left">Filters</th><th class="num">Snapshots</th><th class="num">Analyses</th></tr></thead>
+            <tbody>
+            @foreach (var s in App.Workspace.Segments)
+            {
+                <tr>
+                    <td class="left"><b>@s.Name</b></td>
+                    <td class="left muted">@ActuarialService.FilterText(s)</td>
+                    <td class="num">@App.Workspace.Snapshots.Values.Count(x => x.Snapshot.Segment == s.Id)</td>
+                    <td class="num">@App.Workspace.Analyses.Where(a => a.Analysis.Segment == s.Id).Select(a => a.Analysis.Id).Distinct().Count()</td>
+                </tr>
+            }
+            </tbody>
+        </table>
+        <hr />
+        <h3>New segment</h3>
+        <div class="form-grid">
+            <label class="field"><span>Name</span><input @bind="_name" placeholder="e.g. Motor South" /></label>
+            <label class="field"><span>Line of business</span>
+                <select @bind="_lob"><option value="*">Any</option>@foreach (var l in W.Attributes["lob"]) { <option>@l</option> }</select>
+            </label>
+            <label class="field"><span>Region</span>
+                <select @bind="_region"><option value="*">Any</option>@foreach (var r in W.Attributes["region"]) { <option>@r</option> }</select>
+            </label>
+            <button class="primary" @onclick="CreateSegment">Create</button>
+        </div>
+    </div>
+
+    <div class="panel">
+        <div class="panel-head"><h2>Take a snapshot</h2></div>
+        <p class="muted">Snapshots are also taken automatically when an analysis is created, rolled forward or duplicated.
+            Taking one again for the same data reuses it (same hash).</p>
+        <div class="form-grid">
+            <label class="field"><span>Segment</span>
+                <select @bind="_snapSegment">@foreach (var s in App.Workspace.Segments) { <option value="@s.Id.Value">@s.Name</option> }</select>
+            </label>
+            <label class="field"><span>Valuation (quarter end)</span><input type="date" @bind="_snapDate" /></label>
+            <button @onclick="Snap">Take snapshot</button>
+        </div>
+        <hr />
+        <h3>Warehouse</h3>
+        <dl class="kv">
+            <dt>Claim rows</dt><dd>@W.Claims.Count.ToString("#,0", CultureInfo.InvariantCulture)</dd>
+            <dt>Premium rows</dt><dd>@W.Premium.Count.ToString("#,0", CultureInfo.InvariantCulture)</dd>
+            <dt>Granularity</dt><dd>quarterly accident and transaction periods</dd>
+            <dt>Lines</dt><dd>@string.Join(", ", W.Attributes["lob"])</dd>
+            <dt>Regions</dt><dd>@string.Join(", ", W.Attributes["region"])</dd>
+        </dl>
+    </div>
+</div>
+
+<div class="panel">
+    <h2>Snapshots</h2>
+    <table class="data list">
+        <thead><tr><th class="left">Segment</th><th class="left">Valuation</th><th class="num">Cells</th><th class="num">Paid to date</th><th class="num">Premium</th><th class="left">Content hash</th><th class="left">Taken</th><th class="num">Used by</th></tr></thead>
+        <tbody>
+        @foreach (var s in App.Workspace.Snapshots.Values.OrderBy(s => App.Service.SegmentOf(s.Snapshot.Segment).Name).ThenBy(s => s.Snapshot.ValuationDate))
+        {
+            <tr>
+                <td class="left">@App.Service.SegmentOf(s.Snapshot.Segment).Name</td>
+                <td class="left">@Fmt.Date(s.Snapshot.ValuationDate)</td>
+                <td class="num">@s.Claims.Count</td>
+                <td class="num">@Fmt.Num(s.Claims.Sum(c => c.Paid))</td>
+                <td class="num">@Fmt.Num(s.Premium.Sum(c => c.Amount))</td>
+                <td class="left"><span class="hash" title="@s.Snapshot.ContentHash">@Fmt.Short(s.Snapshot.ContentHash)</span></td>
+                <td class="left faint">@Fmt.When(s.TakenAt)</td>
+                <td class="num">@App.Workspace.Analyses.Count(a => a.Analysis.Data.Id == s.Snapshot.Id)</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private ClaimWarehouse W => App.Workspace.Warehouse;
+    private string _name = "", _lob = "*", _region = "*";
+    private Guid _snapSegment;
+    private DateOnly _snapDate = new(2026, 6, 30);
+
+    protected override void OnStarted() => _snapSegment = App.Workspace.Segments.FirstOrDefault()?.Id.Value ?? Guid.Empty;
+
+    private void CreateSegment()
+    {
+        if (App.Try(() => App.Service.CreateSegment(_name, new Dictionary<string, string> { ["lob"] = _lob, ["region"] = _region }), "Segment created."))
+            _name = "";
+    }
+
+    private void Snap() => App.Try(() => App.Service.TakeSnapshot(new SegmentId(_snapSegment), _snapDate), "Snapshot ready.");
+}

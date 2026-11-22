@@ -1,0 +1,71 @@
+@* Edits a triangle structure fitted to a valuation date: lengths and counts, with the first period derived. *@
+<div class="form-grid">
+    <label class="field"><span>Exposure period</span>
+        <select @bind="ExpLen" @bind:after="Emit">
+            <option value="3">Quarter</option><option value="6">Half-year</option><option value="12">Year</option>
+        </select>
+    </label>
+    <label class="field"><span>Exposure periods</span>
+        <input type="number" min="1" max="80" @bind="ExpCount" @bind:after="Emit" />
+    </label>
+    <label class="field"><span>Development period</span>
+        <select @bind="DevLen" @bind:after="Emit">
+            <option value="3">Quarter</option><option value="6">Half-year</option><option value="12">Year</option>
+        </select>
+    </label>
+    <label class="field"><span>Development periods</span>
+        <input type="number" min="1" max="160" @bind="DevCount" @bind:after="Emit" />
+    </label>
+</div>
+<div class="row" style="margin-top:8px">
+    @if (Current is { } s)
+    {
+        var problems = s.Validate(Valuation).ToList();
+        if (s.ExposurePeriodLength.Months % 3 != 0 || s.DevelopmentPeriodLength.Months % 3 != 0) problems.Add("The claim data is quarterly.");
+        if (problems.Count == 0)
+        {
+            <span class="muted">@s.Describe() · exposure @s.ExposureKeys().First().Label – @s.ExposureKeys().Last().Label</span>
+        }
+        else
+        {
+            <span style="color:var(--bad)">@string.Join(" ", problems)</span>
+        }
+    }
+    <button class="small ghost" @onclick="Square">Square it</button>
+</div>
+
+@code {
+    [Parameter] public DateOnly Valuation { get; set; }
+    [Parameter] public TriangleStructure? Initial { get; set; }
+    [Parameter] public EventCallback<TriangleStructure> Changed { get; set; }
+
+    private int ExpLen = 12, ExpCount = 10, DevLen = 12, DevCount = 10;
+    private DateOnly _lastValuation;
+    public TriangleStructure? Current { get; private set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Current is null && Initial is { } i)
+        {
+            (ExpLen, ExpCount, DevLen, DevCount) = (i.ExposurePeriodLength.Months, i.ExposurePeriodCount, i.DevelopmentPeriodLength.Months, i.DevelopmentPeriodCount);
+        }
+        if (Current is null || _lastValuation != Valuation)
+        {
+            _lastValuation = Valuation;
+            await Emit();
+        }
+    }
+
+    private async Task Square()
+    {
+        DevCount = Math.Max(1, ExpCount * ExpLen / Math.Max(1, DevLen));
+        await Emit();
+    }
+
+    private async Task Emit()
+    {
+        if (ExpLen <= 0 || DevLen <= 0 || ExpCount < 1 || DevCount < 1) return;
+        Current = TriangleStructure.Fit(Valuation, ExpLen, ExpCount, DevLen, DevCount);
+        await Changed.InvokeAsync(Current);
+    }
+}

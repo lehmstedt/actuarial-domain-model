@@ -1,0 +1,120 @@
+@inherits AppComponent
+
+<div class="page-head">
+    <div>
+        <h1>Analyses</h1>
+        <p>An analysis is a segment at a valuation date, with a triangle structure and a template. It pins table versions,
+           owns its selections, and becomes immutable once signed off. Roll-forwards and duplicates are new analyses with a lineage.</p>
+    </div>
+    <button class="primary" @onclick="() => _creating = !_creating">@(_creating ? "Cancel" : "New analysis")</button>
+</div>
+
+@if (_creating)
+{
+    <div class="op-panel">
+        <h3>New analysis</h3>
+        <div class="form-grid">
+            <label class="field"><span>Segment</span>
+                <select @bind="_segment">
+                    @foreach (var s in App.Workspace.Segments) { <option value="@s.Id.Value">@s.Name</option> }
+                </select>
+            </label>
+            <label class="field"><span>Valuation date</span>
+                <select @bind="_valuation">
+                    @foreach (var d in QuarterEnds) { <option value="@Fmt.Date(d)">@Fmt.Date(d)</option> }
+                </select>
+            </label>
+            <label class="field"><span>Template</span>
+                <select @bind="_template">
+                    @foreach (var t in App.Service.Templates.TemplateIds.Select(id => App.Service.Templates.FindLatest(id)!))
+                    { <option value="@t.Id.Value">@t.Name (v@(t.Version.Value))</option> }
+                </select>
+            </label>
+        </div>
+        <h4 style="margin-top:14px">Triangle structure</h4>
+        <StructureEditor Valuation="Valuation" Changed="s => _structure = s" />
+        <div class="row" style="margin-top:12px">
+            <button class="primary" @onclick="Create">Create analysis</button>
+            <span class="muted">Freezes a data snapshot and pins the latest version of every table in the template's dependency closure.</span>
+        </div>
+    </div>
+}
+
+<div class="panel">
+    <table class="data list">
+        <thead><tr>
+            <th class="left">Segment</th><th class="left">Valuation</th><th class="left">Structure</th><th class="left">Template</th>
+            <th class="left">Revisions</th><th class="left">Lineage</th><th class="num">Needs input</th><th class="left">Created</th>
+        </tr></thead>
+        <tbody>
+        @foreach (var g in App.Workspace.Analyses.GroupBy(a => a.Analysis.Id)
+                     .Select(g => g.OrderBy(r => r.Analysis.Revision).ToList())
+                     .OrderBy(g => App.Service.SegmentOf(g[0].Analysis.Segment).Name).ThenByDescending(g => g[0].Analysis.ValuationDate))
+        {
+            var latest = g[^1];
+            var a = latest.Analysis;
+            var t = App.Service.Templates.Get(a.Template, a.TemplateVersion);
+            var needs = a.Status == AnalysisStatus.Draft ? StateValidator.Missing(a.State, a.Structure, a.Manifest, App.Service.Library).Count : 0;
+            <tr>
+                <td class="left"><a @onclick="() => App.OpenAnalysis(a.Id, a.Revision)"><b>@App.Service.SegmentOf(a.Segment).Name</b></a></td>
+                <td class="left">@Fmt.Date(a.ValuationDate)</td>
+                <td class="left muted">@a.Structure.ExposurePeriodCount × @(a.Structure.ExposurePeriodLength.Months)m / @a.Structure.DevelopmentPeriodCount × @(a.Structure.DevelopmentPeriodLength.Months)m</td>
+                <td class="left">@t.Name <span class="faint">v@(t.Version.Value)</span></td>
+                <td class="left">
+                    <div class="chips">
+                    @foreach (var r in g)
+                    {
+                        var rr = r.Analysis;
+                        <a class="badge @(rr.Status == AnalysisStatus.SignedOff ? "signed" : "draft")" @onclick="() => App.OpenAnalysis(rr.Id, rr.Revision)">
+                            rev @rr.Revision · @(rr.Status == AnalysisStatus.SignedOff ? "signed off" : "draft")
+                        </a>
+                    }
+                    </div>
+                </td>
+                <td class="left muted">
+                    @if (g[0].Analysis.DerivedFrom is { } l && App.Workspace.Analyses.FirstOrDefault(x => x.Analysis.Id == l.SourceAnalysis && x.Analysis.Revision == l.SourceRevision) is { } src)
+                    {
+                        <span>@l.Operation from <a @onclick="() => App.OpenAnalysis(l.SourceAnalysis, l.SourceRevision)">@App.Service.SegmentOf(src.Analysis.Segment).Name @Fmt.Date(src.Analysis.ValuationDate) r@(l.SourceRevision)</a></span>
+                    }
+                </td>
+                <td class="num">@if (needs > 0) { <span class="dot">@needs</span> }</td>
+                <td class="left faint">@Fmt.When(g[0].CreatedAt) · @g[0].CreatedBy</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    private bool _creating;
+    private Guid _segment, _template;
+    private string _valuation = "2025-12-31";
+    private TriangleStructure? _structure;
+    private DateOnly Valuation => DateOnly.Parse(_valuation, CultureInfo.InvariantCulture);
+
+    private IEnumerable<DateOnly> QuarterEnds
+    {
+        get
+        {
+            var end = App.Workspace.Warehouse.DataThrough;
+            for (var d = end; d.Year >= 2014; d = new DateOnly(d.Year, d.Month, 1).AddMonths(-3).AddMonths(1).AddDays(-1)) yield return d;
+        }
+    }
+
+    protected override void OnStarted()
+    {
+        _segment = App.Workspace.Segments.FirstOrDefault()?.Id.Value ?? Guid.Empty;
+        _template = App.Service.Templates.TemplateIds.FirstOrDefault().Value;
+    }
+
+    private void Create()
+    {
+        if (_structure is null) return;
+        AnalysisRecord? rec = null;
+        if (App.Try(() => rec = App.Service.CreateAnalysis(new SegmentId(_segment), Valuation, _structure, new TemplateId(_template)), "Analysis created."))
+        {
+            _creating = false;
+            App.OpenAnalysis(rec!.Analysis.Id, rec.Analysis.Revision);
+        }
+    }
+}

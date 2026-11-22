@@ -1,0 +1,49 @@
+@inject AppState App
+
+@if (Events.Count == 0) { <div class="empty">Nothing recorded yet.</div> }
+else
+{
+    <table class="data list">
+        <thead><tr><th class="left">When</th><th class="left">Who</th><th class="left">What</th><th class="left">Analysis</th><th class="left"></th></tr></thead>
+        <tbody>
+        @foreach (var e in Events)
+        {
+            <tr>
+                <td class="left faint">@Fmt.When(e.At)</td>
+                <td class="left">@e.User</td>
+                <td class="left" style="white-space:normal">
+                    <span class="badge @(e.Kind is AuditKind.PublishRejected ? "bad" : e.Kind is AuditKind.SignedOff ? "signed" : "")">@e.Kind</span>
+                    @e.Summary
+                    @if (e.Details is { Count: > 0 } && _open.Contains(e.Id))
+                    {
+                        <ul>@foreach (var d in e.Details) { <li>@d</li> }</ul>
+                    }
+                    @if (e.Report is not null && _open.Contains(e.Id))
+                    {
+                        <ReportView Report="e.Report" />
+                    }
+                </td>
+                <td class="left">
+                    @if (e.Analysis is { } id && App.Workspace.Analyses.Any(r => r.Analysis.Id == id && r.Analysis.Revision == e.Revision))
+                    {
+                        var rec = App.Service.Get(id, e.Revision!.Value);
+                        <a @onclick="() => App.OpenAnalysis(id, e.Revision!.Value)">@App.Service.SegmentOf(rec.Analysis.Segment).Name · @Fmt.Date(rec.Analysis.ValuationDate) · rev @e.Revision</a>
+                    }
+                </td>
+                <td class="left">
+                    @if (e.Report is not null || e.Details is { Count: > 0 })
+                    {
+                        <button class="small ghost" @onclick="() => Toggle(e.Id)">@(_open.Contains(e.Id) ? "Hide" : "Details")</button>
+                    }
+                </td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<AuditEvent> Events { get; set; } = Array.Empty<AuditEvent>();
+    private readonly HashSet<Guid> _open = new();
+    private void Toggle(Guid id) { if (!_open.Remove(id)) _open.Add(id); }
+}

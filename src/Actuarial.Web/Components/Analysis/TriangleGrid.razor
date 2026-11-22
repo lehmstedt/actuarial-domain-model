@@ -1,0 +1,54 @@
+@* A development-cell column as a triangle: exposure periods down, development ages across. *@
+<div class="table-wrap" style="max-height:@(MaxHeight)px">
+    <table class="data">
+        <thead><tr>
+            <th class="rowh">@Corner</th>
+            @for (var d = FirstDev; d < Ctx.Dev.Count; d++)
+            {
+                <th>@(FactorLabels ? Ctx.Dev[d].Label : Ctx.Dev[d].EndAge.ToString(CultureInfo.InvariantCulture))</th>
+            }
+        </tr></thead>
+        <tbody>
+        @for (var e = 0; e < Ctx.Ex.Count; e++)
+        {
+            var ei = e;
+            <tr>
+                <td class="rowh">@Ctx.Ex[e].Label</td>
+                @for (var d = FirstDev; d < Ctx.Dev.Count; d++)
+                {
+                    var di = d;
+                    var known = d <= Ctx.Latest(e);
+                    var v = Column?.At(e, d);
+                    if (!known) { <td class="na"></td> continue; }
+                    if (OverrideTable is { } t && OverrideColumn is { } col && Editing)
+                    {
+                        var k = new StateKey(t, col, Ctx.Ex[ei], Ctx.Dev[di]);
+                        <td class="@(Ctx.Entry(k) is not null ? "override" : "")">
+                            <input value="@Fmt.Input(v)" @onchange="x => Ctx.SetAmount(k, x.Value?.ToString())" title="Blank restores the computed value" />
+                        </td>
+                    }
+                    else
+                    {
+                        var isOverride = OverrideTable is { } t2 && OverrideColumn is { } c2 && Ctx.Entry(new StateKey(t2, c2, Ctx.Ex[ei], Ctx.Dev[di])) is not null;
+                        <td class="@(isOverride ? "override" : "")" style="@(d == Ctx.Latest(e) && HighlightDiagonal ? "font-weight:650" : "")">@Fmt.Num(v, Measure)</td>
+                    }
+                }
+            </tr>
+        }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public AnalysisCtx Ctx { get; set; } = null!;
+    [Parameter] public ColumnResult? Column { get; set; }
+    [Parameter] public MeasureKind? Measure { get; set; }
+    [Parameter] public string Corner { get; set; } = "Exposure \\ age";
+    [Parameter] public bool FactorLabels { get; set; }
+    [Parameter] public int FirstDev { get; set; }
+    [Parameter] public bool HighlightDiagonal { get; set; } = true;
+    [Parameter] public int MaxHeight { get; set; } = 520;
+    [Parameter] public TableId? OverrideTable { get; set; }
+    [Parameter] public string? OverrideColumn { get; set; }
+    [Parameter] public bool Editing { get; set; }
+}
