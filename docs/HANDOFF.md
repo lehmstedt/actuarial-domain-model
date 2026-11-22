@@ -105,6 +105,12 @@ tests/Actuarial.Domain.Tests/                xUnit tests
 - **Persistence.** JSON documents (`WorkspaceDocument`), with ids as strings and polymorphic definitions tagged by
   `$kind`. Definitions restore without re-validation (they were valid when published). In the app, localStorage.
 - **Audit trail.** Operations log an `AuditEvent` carrying the `MigrationReport`.
+- **Editors.** Tables and templates are created and edited through forms, not JSON. `Actuarial.Application/Editing`
+  holds mutable drafts (`TableDraft`, `TemplateDraft`) that build immutable definitions; `TableBatch` holds several
+  drafts that publish atomically and may reference each other (a floating ref to a batch member means the draft).
+  The forms derive what the domain derives: a reference's grain comes from the chosen column, exhibit schemas from
+  the statistics, a selectable method's ultimate key from the method table. Live checks run `SelfCheck`; cross-table
+  checks stay at publish. A refused publish offers to add the dependents to the batch.
 - **Semantics decided along the way:**
   - Development period i is `DevKey(i·L, L)` and holds the cumulative at age (i+1)·L. The factor keyed by period
     i ≥ 1 develops age i·L → (i+1)·L ("12-24 ⇒ 12"). Period 0 has no factor and is not listed as needed.

@@ -1,4 +1,5 @@
 @using Actuarial.Application.Persistence
+@using Actuarial.Application.Editing
 @inherits AppComponent
 
 <div class="page-head">
@@ -10,14 +11,10 @@
            Existing analyses keep the versions they pinned.</p>
     </div>
     <div class="row">
-        <select @bind="_newKind">
-            <option value="input">Input table (formula)</option>
-            <option value="development">Development exhibit</option>
-            <option value="exhibit">Exhibit</option>
-            <option value="method">Method table</option>
-            <option value="selection">Selection table</option>
+        <select @bind="_newKind" aria-label="Kind of table">
+            @foreach (var k in Enum.GetValues<TableKind>()) { <option value="@k">@TableKinds.Label(k)</option> }
         </select>
-        <button @onclick="NewTable">New table…</button>
+        <button class="primary" @onclick="NewTable">New table…</button>
     </div>
 </div>
 
@@ -44,7 +41,7 @@
             <ul class="tree">
                 @foreach (var t in g)
                 {
-                    <li class="obj @(Selected?.Id == t.Id && !_isNew ? "active" : "")" @onclick="() => Pick(t.Id)">
+                    <li class="obj @(Selected?.Id == t.Id && _batch is null ? "active" : "")" @onclick="() => Pick(t.Id)">
                         <span>@t.Name</span><span class="faint">v@(t.Version.Value)</span>
                     </li>
                 }
@@ -54,25 +51,64 @@
     }
 
     <div>
-        @if (_isNew || _editing)
+        @if (_batch is { } batch && Active is { } active)
         {
+            var checks = active.Check(batch.Resolve);
             <div class="op-panel">
                 <div class="panel-head">
-                    <h2>@(_isNew ? "New table" : $"Publish {Selected!.Name} v{App.Service.Library.NextVersion(Selected.Id).Value}")</h2>
+                    <h2>@(batch.Drafts.Count > 1 ? $"Publish {batch.Drafts.Count} tables together" : active.IsNew ? "New table" : $"Publish {active.Name} v{active.Version}")</h2>
                     <div class="row">
                         <button @onclick="Cancel">Cancel</button>
-                        <button class="primary" @onclick="Publish">Publish</button>
+                        <button class="primary" @onclick="Publish">Publish@(batch.Drafts.Count > 1 ? " all" : "")</button>
                     </div>
                 </div>
-                <p class="muted">Edit the definition as JSON. Keep <code>$kind</code> first. Pasting an array publishes several tables atomically —
-                    use that for a breaking change together with the tables that depend on it.</p>
+                @if (!active.IsNew || batch.Drafts.Count > 1)
+                {
+                    <p class="muted">Published versions never change. Analyses keep the version they pinned and can upgrade later.</p>
+                }
+                else { <p class="muted">@TableKinds.Describe(active.Kind)</p> }
+
+                @if (batch.Drafts.Count > 1)
+                {
+                    <div class="tabs">
+                        @foreach (var d in batch.Drafts)
+                        {
+                            <button class="@(d == active ? "on" : "")" @onclick="() => _active = d">@(d.Name.Length > 0 ? d.Name : "Untitled") <span class="faint">v@(d.Version)</span></button>
+                        }
+                    </div>
+                }
+
                 @if (_errors.Count > 0)
                 {
                     <div class="callout bad"><b>Publish refused — nothing was changed.</b>
                         <ul>@foreach (var e in _errors) { <li>@e</li> }</ul>
+                        @{ var deps = batch.Dependents().ToList(); }
+                        @if (deps.Count > 0)
+                        {
+                            <p style="margin:8px 0 0">If the change breaks tables that read this one, publish them together:</p>
+                            <div class="row" style="margin-top:6px">@foreach (var dep in deps) { <button class="small" @onclick="() => Include(dep.Id)">+ @dep.Name</button> }</div>
+                        }
                     </div>
                 }
-                <textarea class="code" spellcheck="false" @bind="_json"></textarea>
+
+                <TableEditor @key="active" Batch="batch" D="active" Original="App.Service.Library.FindLatest(active.Id)" Changed="StateHasChanged" />
+
+                <div class="ed-foot">
+                    @if (checks.Count == 0) { <span class="ok-text">✓ The form is complete. Publishing also checks references against the library.</span> }
+                    else
+                    {
+                        <div class="callout warn" style="margin:0"><b>To fix before publishing</b><ul>@foreach (var c in checks) { <li>@c</li> }</ul></div>
+                    }
+                    <div class="row">
+                        @if (batch.Drafts.Count > 1) { <button class="small ghost danger" @onclick="() => Drop(active)">Remove from this publish</button> }
+                        <select class="mini" value="" @onchange="e => { if (Guid.TryParse(e.Value?.ToString(), out var g)) Include(new TableId(g)); }" aria-label="Publish another table alongside" title="Tables in one publish are checked and committed together">
+                            <option value="">+ Publish another table alongside…</option>
+                            @{ var dependents = batch.Dependents().Select(t => t.Id).ToHashSet(); }
+                            @foreach (var t in Tables.Where(t => batch.DraftOf(t.Id) is null).OrderByDescending(t => dependents.Contains(t.Id)).ThenBy(t => t.Name))
+                            { <option value="@t.Id.Value">@t.Name@(dependents.Contains(t.Id) ? " (reads this)" : "")</option> }
+                        </select>
+                    </div>
+                </div>
             </div>
         }
         else if (Selected is { } def)
@@ -153,26 +189,29 @@
                     </ul>
                 </div>
             </div>
-            <div class="panel">
-                <h3>Definition (v@(shown.Version.Value))</h3>
-                <pre class="mono" style="white-space:pre-wrap;margin:0;max-height:420px;overflow:auto">@Json.Serialize(shown, pretty: true)</pre>
-            </div>
+            <details class="panel">
+                <summary class="muted">Stored definition (v@(shown.Version.Value), read-only)</summary>
+                <pre class="mono" style="white-space:pre-wrap;margin:8px 0 0;max-height:420px;overflow:auto">@Json.Serialize(shown, pretty: true)</pre>
+            </details>
         }
     </div>
 </div>
 
 @code {
-    private bool _editing, _isNew;
-    private string _json = "", _newKind = "method";
+    private TableBatch? _batch;
+    private TableDraft? _active;
+    private TableKind _newKind = TableKind.Method;
     private List<string> _errors = new();
     private TableVersion? _version;
+
+    private TableDraft? Active => _active is { } a && _batch?.Drafts.Contains(a) == true ? a : _batch?.Drafts.FirstOrDefault();
 
     private IEnumerable<TableDefinition> Tables => App.Service.Library.TableIds
         .Select(id => App.Service.Library.FindLatest(id)!).OrderBy(t => t.KindLabel).ThenBy(t => t.Name);
 
     private TableDefinition? Selected => App.LibraryTable is { } id ? App.Service.Library.FindLatest(id) : Tables.FirstOrDefault();
 
-    private void Pick(TableId id) { App.LibraryTable = id; _version = null; _editing = _isNew = false; _errors.Clear(); }
+    private void Pick(TableId id) { App.LibraryTable = id; _version = null; _batch = null; _errors.Clear(); }
 
     private string ColumnLabel(string key) =>
         key.StartsWith("weight:") && Guid.TryParse(key[7..], out var g) ? $"weight:{App.Service.TableName(new TableId(g))}" : key;
@@ -183,27 +222,47 @@
         return n == 0 ? "none" : $"{n} analysis revision{(n == 1 ? "" : "s")} pin this version";
     }
 
-    private void Edit()
+    private void Start(TableDraft d)
     {
-        _json = Json.Serialize(App.Service.DraftNextVersion(Selected!.Id), pretty: true);
-        _editing = true; _isNew = false; _errors.Clear();
+        _batch = new TableBatch(App.Service.Library);
+        _batch.Drafts.Add(d);
+        _active = d;
+        _errors.Clear();
     }
 
-    private void Cancel() { _editing = _isNew = false; _errors.Clear(); }
+    private void Edit() => Start(App.Service.EditTable(Selected!.Id));
+
+    private void NewTable() => Start(App.Service.NewTable(_newKind));
+
+    private void Include(TableId id)
+    {
+        if (_batch is null || _batch.DraftOf(id) is not null) return;
+        var d = App.Service.EditTable(id);
+        _batch.Drafts.Add(d);
+        _active = d;
+    }
+
+    private void Drop(TableDraft d)
+    {
+        _batch?.Drafts.Remove(d);
+        _active = null;
+    }
+
+    private void Cancel() { _batch = null; _errors.Clear(); }
 
     private void Publish()
     {
         _errors.Clear();
-        IReadOnlyList<TableDefinition> batch;
-        try { batch = ActuarialService.ParseTables(_json); }
-        catch (UseCaseException e) { _errors.Add(e.Message); return; }
+        if (_batch is null) return;
+        var (batch, problems) = _batch.Build();
+        if (batch is null) { _errors = problems.ToList(); return; }
 
         var r = App.Service.PublishTables(batch);
         if (r.Ok)
         {
             App.Toast($"Published {string.Join(", ", batch.Select(b => $"{b.Name} v{b.Version.Value}"))}.");
             App.LibraryTable = batch.First().Id;
-            _editing = _isNew = false;
+            _batch = null;
             _version = null;
         }
         else
@@ -214,37 +273,5 @@
                 return $"{name} v{e.Version.Value}: {e.Message}";
             }).ToList();
         }
-    }
-
-    private void NewTable()
-    {
-        var id = TableId.New();
-        var v1 = new TableVersion(1);
-        var paid = App.Service.Library.TableIds.Select(t => App.Service.Library.FindLatest(t)!).FirstOrDefault(t => t.Output.Find("paid") is not null)?.Id ?? id;
-        var prem = App.Service.Library.TableIds.Select(t => App.Service.Library.FindLatest(t)!).FirstOrDefault(t => t.Output.Find("premium") is { Grain: GrainKind.ExposurePeriod })?.Id ?? id;
-        var paidReq = new InputRequirement(TableRef.Floating(paid), "paid", GrainKind.DevelopmentCell, MeasureKind.Paid, BasisKind.Cumulative);
-        var premReq = new InputRequirement(TableRef.Floating(prem), "premium", GrainKind.ExposurePeriod, MeasureKind.Premium);
-        var methods = Tables.OfType<MethodTableDefinition>().Take(2).Select(m => new MethodRef(TableRef.Floating(m.Id), m.UltimateColumnKey)).ToList();
-
-        TableDefinition draft = _newKind switch
-        {
-            "input" => new InputTableDefinition(id, v1, "Paid loss ratio triangle", new FormulaSource("$1 / $2", new[] { paidReq, premReq }),
-                new TableSchema(new[] { new ColumnSchema("paid_lr", MeasureKind.Other, BasisKind.Cumulative, GrainKind.DevelopmentCell) })),
-            "development" => new DevelopmentExhibitDefinition(id, v1, "Paid development (alternative)", TableRef.Floating(paid), "paid",
-                new[] { new StatisticSpec("vwa_all", StatisticKind.VolumeWeightedAverage, null), new StatisticSpec("sa_5", StatisticKind.SimpleAverage, 5) }, true),
-            "exhibit" => new ExhibitTableDefinition(id, v1, "Paid-to-date ratios", new[] { paidReq },
-                new[] { new StatisticSpec("sa_5", StatisticKind.SimpleAverage, 5), new StatisticSpec("latest", StatisticKind.Latest, null) },
-                new TableSchema(new[] { "sa_5", "latest", "selected" }.Select(k => new ColumnSchema(k, MeasureKind.Paid, BasisKind.Cumulative, GrainKind.DevelopmentPeriod)).ToList())),
-            "selection" => new SelectionTableDefinition(id, v1, "Alternative selection", new[] { premReq }, new[] { AverageKind.Arithmetic }, methods),
-            _ => new MethodTableDefinition(id, v1, "Paid loss ratio method", new[]
-            {
-                new MethodColumn("premium", "Premium", new FormulaColumn("$1", new[] { premReq }), MeasureKind.Premium),
-                new MethodColumn("paid", "Paid to date", new FormulaColumn("latest($1)", new[] { paidReq }), MeasureKind.Paid),
-                new MethodColumn("load", "Load factor", new UserInputColumn(), MeasureKind.Other),
-                new MethodColumn("ultimate", "Ultimate", new FormulaColumn("max(paid, premium * load)", Array.Empty<InputRequirement>()), MeasureKind.Ultimate),
-            }, "ultimate"),
-        };
-        _json = Json.Serialize(draft, pretty: true);
-        _isNew = true; _editing = false; _errors.Clear();
     }
 }

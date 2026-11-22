@@ -1,0 +1,138 @@
+@using Actuarial.Application.Editing
+@inject AppState App
+@* Builds the presentation tree: folders hold folders or collections, collections hold tables. *@
+
+<div class="form-grid">
+    <label class="field wide"><span>Template name</span>
+        <input value="@T.Name" @oninput="e => Set(() => T.Name = e.Value?.ToString() ?? string.Empty)" />
+    </label>
+    <div class="field"><span>Version</span><div class="static">v@(T.Version)@(T.IsNew ? " (new template)" : "")</div></div>
+</div>
+
+<div class="tpl-edit">
+    @foreach (var c in T.Root.Children) { @Node(c, T.Root) }
+    <div class="row tpl-add">
+        <button class="small" @onclick="() => Set(() => AddFolder(T.Root))">+ Folder</button>
+        <button class="small" @onclick="() => Set(() => AddCollection(T.Root))">+ Collection</button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TemplateDraft T { get; set; } = null!;
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private Library Lib => App.Service.Library;
+    private IEnumerable<TableDefinition> Tables => Lib.TableIds.Select(id => Lib.FindLatest(id)!).OrderBy(t => t.KindLabel).ThenBy(t => t.Name);
+
+    private Task Set(Action a) { a(); return Changed.InvokeAsync(); }
+
+    private static string NextName(TemplateNodeDraft parent, string stem)
+    {
+        var n = parent.Children.Count(c => c.Name.StartsWith(stem)) + 1;
+        return n == 1 ? stem : $"{stem} {n}";
+    }
+
+    private static void AddFolder(TemplateNodeDraft parent) => parent.Children.Add(TemplateNodeDraft.Folder(NextName(parent, "Folder")));
+    private static void AddCollection(TemplateNodeDraft parent) => parent.Children.Add(TemplateNodeDraft.Collection(NextName(parent, "Collection")));
+
+    private void Move(TemplateNodeDraft parent, TemplateNodeDraft n, int by)
+    {
+        var i = parent.Children.IndexOf(n);
+        var j = i + by;
+        if (j < 0 || j >= parent.Children.Count) return;
+        parent.Children.RemoveAt(i);
+        parent.Children.Insert(j, n);
+    }
+
+    private void AddTable(TemplateNodeDraft collection, string? value)
+    {
+        if (Guid.TryParse(value, out var g) && Lib.FindLatest(new TableId(g)) is { } t)
+            collection.Children.Add(TemplateNodeDraft.Object(t));
+    }
+
+    private void PickTable(TemplateNodeDraft o, string? value)
+    {
+        if (!Guid.TryParse(value, out var g) || Lib.FindLatest(new TableId(g)) is not { } t) return;
+        var oldName = o.Table is { } old ? Lib.FindLatest(old)?.Name : null;
+        if (string.IsNullOrWhiteSpace(o.Name) || o.Name == oldName) o.Name = t.Name;
+        o.Table = t.Id;
+        o.PinnedVersion = null;
+    }
+
+    private RenderFragment Controls(TemplateNodeDraft parent, TemplateNodeDraft n) => __builder =>
+    {
+        var i = parent.Children.IndexOf(n);
+        <span class="tpl-ctl">
+            <button class="small ghost" disabled="@(i == 0)" title="Move up" @onclick="() => Set(() => Move(parent, n, -1))">↑</button>
+            <button class="small ghost" disabled="@(i == parent.Children.Count - 1)" title="Move down" @onclick="() => Set(() => Move(parent, n, 1))">↓</button>
+            <button class="small ghost danger" title="@(n.Kind == TemplateNodeKind.Object ? "Remove" : $"Remove with its {n.CountObjects()} table(s)")" @onclick="() => Set(() => parent.Children.Remove(n))">✕</button>
+        </span>
+    };
+
+    private RenderFragment Node(TemplateNodeDraft n, TemplateNodeDraft parent) => __builder =>
+    {
+        switch (n.Kind)
+        {
+            case TemplateNodeKind.Folder:
+                <div class="tpl-node folder" @key="n.NodeId">
+                    <div class="tpl-row">
+                        <span class="tpl-ico">📁</span>
+                        <input class="tpl-name" value="@n.Name" @oninput="e => Set(() => n.Name = e.Value?.ToString() ?? string.Empty)" aria-label="Folder name" />
+                        @Controls(parent, n)
+                    </div>
+                    <div class="tpl-children">
+                        @foreach (var c in n.Children) { @Node(c, n) }
+                        <div class="row tpl-add">
+                            <button class="small ghost" @onclick="() => Set(() => AddFolder(n))">+ Folder</button>
+                            <button class="small ghost" @onclick="() => Set(() => AddCollection(n))">+ Collection</button>
+                        </div>
+                    </div>
+                </div>
+                break;
+            case TemplateNodeKind.Collection:
+                <div class="tpl-node collection" @key="n.NodeId">
+                    <div class="tpl-row">
+                        <span class="tpl-ico">▤</span>
+                        <input class="tpl-name" value="@n.Name" @oninput="e => Set(() => n.Name = e.Value?.ToString() ?? string.Empty)" aria-label="Collection name" />
+                        @Controls(parent, n)
+                    </div>
+                    <div class="tpl-children">
+                        @foreach (var c in n.Children) { @Node(c, n) }
+                        <div class="tpl-add">
+                            <select class="mini" value="" @onchange="e => Set(() => AddTable(n, e.Value?.ToString()))" aria-label="Add a table">
+                                <option value="">+ Add a table…</option>
+                                @foreach (var g in Tables.GroupBy(t => t.KindLabel))
+                                {
+                                    <optgroup label="@g.Key">@foreach (var t in g) { <option value="@t.Id.Value">@t.Name</option> }</optgroup>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                break;
+            default:
+                var versions = n.Table is { } tid ? Lib.Versions(tid).Select(v => v.Version.Value).ToList() : new List<int>();
+                <div class="tpl-node object" @key="n.NodeId">
+                    <div class="tpl-row">
+                        <input class="tpl-name" value="@n.Name" @oninput="e => Set(() => n.Name = e.Value?.ToString() ?? string.Empty)" aria-label="Shown as" title="Shown as" />
+                        <select class="mini" value="@(n.Table?.Value.ToString() ?? string.Empty)" @onchange="e => Set(() => PickTable(n, e.Value?.ToString()))" aria-label="Table">
+                            @if (n.Table is null) { <option value="">Choose a table…</option> }
+                            @foreach (var g in Tables.GroupBy(t => t.KindLabel))
+                            {
+                                <optgroup label="@g.Key">@foreach (var t in g) { <option value="@t.Id.Value">@t.Name</option> }</optgroup>
+                            }
+                        </select>
+                        @if (versions.Count > 0)
+                        {
+                            <select class="mini" value="@(n.PinnedVersion?.ToString() ?? string.Empty)" @onchange="e => Set(() => n.PinnedVersion = int.TryParse(e.Value?.ToString(), out var v) ? v : null)" aria-label="Version">
+                                <option value="">latest</option>
+                                @foreach (var v in versions) { <option value="@v">pin v@(v)</option> }
+                            </select>
+                        }
+                        @Controls(parent, n)
+                    </div>
+                </div>
+                break;
+        }
+    };
+}

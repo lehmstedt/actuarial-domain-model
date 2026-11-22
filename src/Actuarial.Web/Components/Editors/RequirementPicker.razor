@@ -1,0 +1,88 @@
+@using Actuarial.Application.Editing
+@* Points at a column of another table. The grain is taken from the column; measure and basis become optional checks
+   that publish enforces, so the reference breaks loudly if the source later changes shape. *@
+
+<div class="ref-pick">
+    @if (Label is not null) { <span class="ref-label">@Label</span> }
+    <select value="@(Req.Table?.Value.ToString() ?? string.Empty)" @onchange="PickTable" aria-label="Source table">
+        <option value="">Choose a table…</option>
+        @foreach (var g in Candidates.GroupBy(s => s.Kind))
+        {
+            <optgroup label="@TableKinds.Label(g.Key)">
+                @foreach (var s in g) { <option value="@s.Id.Value">@s.Name@(s.InBatch ? " (in this publish)" : "")</option> }
+            </optgroup>
+        }
+    </select>
+    @if (Source is { } src)
+    {
+        <select value="@(Req.PinnedVersion?.ToString() ?? string.Empty)" @onchange="PickVersion" aria-label="Version" title="A pinned version never changes; latest follows new versions (publish checks they still fit).">
+            <option value="">latest</option>
+            @foreach (var v in src.Versions) { <option value="@v">pin v@(v)</option> }
+        </select>
+        var cols = Columns;
+        <select value="@Req.Column" @onchange="PickColumn" aria-label="Column">
+            @if (!cols.Any(c => c.Key == Req.Column)) { <option value="@Req.Column">@(Req.Column.Length > 0 ? $"{Req.Column} (not available)" : "Choose a column…")</option> }
+            @foreach (var c in cols) { <option value="@c.Key">@c.Key</option> }
+        </select>
+    }
+</div>
+@if (Source is not null && Req.Column.Length > 0)
+{
+    <div class="ref-shape">
+        <span class="badge" title="Grain follows the column">@Fmt.Grain(Req.Grain)</span>
+        <label title="Publish refuses the reference if the column's measure differs">must be
+            <select class="mini" value="@(Req.Measure?.ToString() ?? string.Empty)" @onchange="e => Set(() => Req.Measure = Enum.TryParse<MeasureKind>(e.Value?.ToString(), out var m) ? m : null)">
+                <option value="">any measure</option>
+                @foreach (var m in Enum.GetValues<MeasureKind>()) { <option value="@m">@m</option> }
+            </select>
+        </label>
+        <select class="mini" value="@(Req.Basis?.ToString() ?? string.Empty)" @onchange="e => Set(() => Req.Basis = Enum.TryParse<BasisKind>(e.Value?.ToString(), out var b) ? b : null)" aria-label="Basis check">
+            <option value="">any basis</option>
+            @foreach (var b in Enum.GetValues<BasisKind>()) { <option value="@b">@b</option> }
+        </select>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public TableBatch Batch { get; set; } = null!;
+    [Parameter, EditorRequired] public TableDraft Self { get; set; } = null!;
+    [Parameter, EditorRequired] public RequirementDraft Req { get; set; } = null!;
+    [Parameter] public string? Label { get; set; }
+    /// <summary>Which columns this reference may read. Tables without such a column are not offered.</summary>
+    [Parameter] public Func<ColumnSchema, bool>? Accept { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private bool Ok(ColumnSchema c) => Accept?.Invoke(c) ?? true;
+
+    private IEnumerable<SourceTable> Candidates => Batch.Sources(Self)
+        .Where(s => s.Id == Req.Table || Batch.ColumnsOf(s.Id, null).Any(Ok));
+
+    private SourceTable? Source => Req.Table is { } t ? Batch.Sources(Self).FirstOrDefault(s => s.Id == t) : null;
+
+    private IReadOnlyList<ColumnSchema> Columns => Req.Table is { } t ? Batch.ColumnsOf(t, Req.PinnedVersion).Where(Ok).ToList() : Array.Empty<ColumnSchema>();
+
+    private Task PickTable(ChangeEventArgs e)
+    {
+        Req.Table = Guid.TryParse(e.Value?.ToString(), out var g) ? new TableId(g) : null;
+        Req.PinnedVersion = null;
+        var cols = Columns;
+        if ((cols.FirstOrDefault(c => c.Key == Req.Column) ?? cols.FirstOrDefault()) is { } first) Req.UseColumn(first);
+        else Req.Column = "";
+        return Changed.InvokeAsync();
+    }
+
+    private Task PickVersion(ChangeEventArgs e)
+    {
+        Req.PinnedVersion = int.TryParse(e.Value?.ToString(), out var v) ? v : null;
+        if (Columns.FirstOrDefault(c => c.Key == Req.Column) is { } c) Req.UseColumn(c);
+        return Changed.InvokeAsync();
+    }
+
+    private Task PickColumn(ChangeEventArgs e)
+    {
+        if (Columns.FirstOrDefault(c => c.Key == e.Value?.ToString()) is { } c) Req.UseColumn(c);
+        return Changed.InvokeAsync();
+    }
+
+    private Task Set(Action a) { a(); return Changed.InvokeAsync(); }
+}

@@ -41,7 +41,7 @@ resizes and rotation.
 | Area | Use case | Where in the UI |
 |---|---|---|
 | Library | Browse tables, versions, schema, dependencies and dependents | Table library |
-| | Publish a new version or a new table (JSON); publish several atomically | Table library → *Edit → new version* / *New table…* |
+| | Publish a new version or a new table with a form per table kind; publish several atomically (*Publish another table alongside…*) | Table library → *Edit → new version* / *New table…* |
 | | See a breaking change refused, with the dependents that break | (same) |
 | Templates | Browse the tree and its computed dependency closure; publish a version | Templates |
 | Data | Create segments by attribute filter; take content-hashed snapshots | Segments & data |

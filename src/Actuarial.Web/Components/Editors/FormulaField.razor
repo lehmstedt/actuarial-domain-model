@@ -1,0 +1,88 @@
+@using Actuarial.Application.Editing
+@* A formula with its numbered references ($1, $2…) and a live check of what it yields. *@
+
+<div class="formula">
+    <div class="formula-line">
+        <span class="mono faint">=</span>
+        <input class="mono" spellcheck="false" placeholder="e.g. latest($1) * $2" value="@Expression"
+               @oninput="e => Edit(e.Value?.ToString() ?? string.Empty)" aria-label="Formula" />
+    </div>
+    @{ var (grain, problem) = TableDraft.Inspect(Expression, Refs, Column); }
+    <div class="formula-status">
+        @if (problem is not null && Expression.Length > 0) { <span class="bad-text">@problem</span> }
+        else if (grain is { } g)
+        {
+            if (Target is { } t && !Actuarial.Domain.Formulas.Formula.Fits(g, t)) { <span class="bad-text">Yields @Fmt.Grain(g) values, which do not fit @Fmt.Grain(t).</span> }
+            else { <span class="ok-text">✓ yields @Fmt.Grain(g) values</span> }
+        }
+    </div>
+
+    @for (var i = 0; i < Refs.Count; i++)
+    {
+        var r = Refs[i];
+        var n = i + 1;
+        <div class="ref-row">
+            <button class="small ghost mono" title="Insert into the formula" @onclick="() => Insert(n)">$@n</button>
+            <div class="ref-body"><RequirementPicker Batch="Batch" Self="Self" Req="r" Changed="Changed" /></div>
+            <button class="small ghost danger" title="Remove this reference (later ones are renumbered)" @onclick="() => Remove(r, n)">✕</button>
+        </div>
+    }
+    <div class="row formula-tools">
+        <button class="small" @onclick="Add">+ Reference</button>
+        @foreach (var k in LocalColumns) { <button class="small ghost mono" title="Another column of this table" @onclick="() => Append(k)">@k</button> }
+        <details class="help"><summary>Functions</summary>
+            <p><code>latest(x)</code> — a triangle's latest diagonal, per exposure period.<br />
+               <code>current(x)</code> — the value at each exposure period's current age (e.g. a CDF).<br />
+               <code>min</code>, <code>max</code>, <code>coalesce</code> (any number of arguments), <code>abs(x)</code>; <code>+ − × /</code> and brackets.<br />
+               Values broadcast: a single value fits anywhere; per-period values fit a triangle.</p>
+        </details>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TableBatch Batch { get; set; } = null!;
+    [Parameter, EditorRequired] public TableDraft Self { get; set; } = null!;
+    [Parameter, EditorRequired] public string Expression { get; set; } = "";
+    [Parameter] public EventCallback<string> ExpressionChanged { get; set; }
+    [Parameter, EditorRequired] public List<RequirementDraft> Refs { get; set; } = null!;
+    /// <summary>Other columns of the same table a formula may name (method tables).</summary>
+    [Parameter] public IReadOnlyList<string> LocalColumns { get; set; } = Array.Empty<string>();
+    [Parameter] public GrainKind? Target { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private GrainKind? Column(string key) => LocalColumns.Contains(key) ? GrainKind.ExposurePeriod : null;
+
+    private async Task Edit(string text)
+    {
+        Expression = text;
+        await ExpressionChanged.InvokeAsync(text);
+        await Changed.InvokeAsync();
+    }
+
+    private Task Insert(int n) => Append($"${n}");
+
+    private Task Append(string token)
+    {
+        var e = Expression.TrimEnd();
+        var join = e.Length == 0 || e.EndsWith('(') ? "" : (e.EndsWith('+') || e.EndsWith('-') || e.EndsWith('*') || e.EndsWith('/') || e.EndsWith(',') ? " " : " * ");
+        return Edit(e + join + token);
+    }
+
+    private Task Add()
+    {
+        Refs.Add(new RequirementDraft());
+        return Changed.InvokeAsync();
+    }
+
+    /// <summary>Removing $n renumbers the later references in the formula so it keeps meaning the same thing.</summary>
+    private Task Remove(RequirementDraft r, int n)
+    {
+        Refs.Remove(r);
+        var text = System.Text.RegularExpressions.Regex.Replace(Expression, @"\$(\d+)", m =>
+        {
+            var k = int.Parse(m.Groups[1].Value);
+            return k > n ? $"${k - 1}" : m.Value;
+        });
+        return Edit(text);
+    }
+}

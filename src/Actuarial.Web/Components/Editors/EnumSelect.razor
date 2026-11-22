@@ -1,0 +1,17 @@
+@typeparam TEnum where TEnum : struct, Enum
+
+<select value="@Value" @onchange="e => ValueChanged.InvokeAsync(Enum.Parse<TEnum>(e.Value!.ToString()!))" aria-label="@typeof(TEnum).Name.Replace("Kind", "")">
+    @foreach (var v in Enum.GetValues<TEnum>()) { <option value="@v">@Label(v)</option> }
+</select>
+
+@code {
+    [Parameter] public TEnum Value { get; set; }
+    [Parameter] public EventCallback<TEnum> ValueChanged { get; set; }
+
+    private static string Label(TEnum v) => v.ToString() switch
+    {
+        "ClaimCount" => "Claim count",
+        "NotApplicable" => "n/a",
+        var s => s
+    };
+}

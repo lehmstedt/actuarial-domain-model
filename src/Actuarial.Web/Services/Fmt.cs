@@ -42,4 +42,21 @@ public static class Fmt
 
     /// <summary>Is the column an amount that makes sense to total?</summary>
     public static bool Totals(MeasureKind m) => m is MeasureKind.Paid or MeasureKind.Incurred or MeasureKind.Premium or MeasureKind.Ultimate or MeasureKind.ClaimCount;
+
+    public static string Grain(GrainKind g) => g switch
+    {
+        GrainKind.DevelopmentCell => "triangle",
+        GrainKind.DevelopmentPeriod => "per development age",
+        GrainKind.ExposurePeriod => "per exposure period",
+        _ => "single value"
+    };
+
+    public static string Statistic(StatisticKind k) => k switch
+    {
+        StatisticKind.SimpleAverage => "Simple average",
+        StatisticKind.VolumeWeightedAverage => "Volume-weighted average",
+        StatisticKind.Latest => "Latest",
+        StatisticKind.Medial => "Medial average",
+        _ => "Custom (entered)"
+    };
 }
