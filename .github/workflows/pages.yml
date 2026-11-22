@@ -1,8 +1,9 @@
 name: Test and publish the static site
 
+# Tests every push and pull request. Pushes to the default branch are published to GitHub Pages:
+# https://<owner>.github.io/<repo>/
 on:
   push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -10,6 +11,10 @@ permissions:
   contents: read
   pages: write
   id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -26,12 +31,16 @@ jobs:
           path: site
 
   deploy:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
     needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      # Turns Pages on (source: GitHub Actions) the first time, if the token is allowed to.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -4,6 +4,8 @@ An actuarial reserving application built on the domain model described in [`docs
 The C# domain model runs **in the browser** (Blazor WebAssembly), so the whole application is a folder of static
 files: no server, no database. Work is saved in the browser's localStorage and can be exported or imported as JSON.
 
+**Live app: https://lehmstedt.github.io/actuarial-domain-model/** (published from the default branch by GitHub Actions).
+
 ## Run it
 
 ```bash
@@ -14,8 +16,8 @@ python3 -m http.server -d site 8080  # or any static file server, from any sub-f
 Then open http://localhost:8080. The first load builds a demo workspace. **Reset demo** on the overview rebuilds it.
 
 Development: `dotnet build`, `dotnet test`, `dotnet run --project src/Actuarial.Web` (dev server with hot reload).
-`.github/workflows/pages.yml` tests, builds and publishes `./site` to GitHub Pages on pushes to `main`
-(enable Pages with the "GitHub Actions" source in the repository settings).
+`.github/workflows/pages.yml` tests every push and publishes `./site` to GitHub Pages on pushes to the default branch.
+If the first deployment fails because Pages is off, set *Settings → Pages → Source* to **GitHub Actions** and re-run it.
 
 ## Layout
 
