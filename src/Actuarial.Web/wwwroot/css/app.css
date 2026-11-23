@@ -243,7 +243,15 @@ button.star.on { color: var(--warn); }
 .tpl-node.object > .tpl-row { padding-left: 26px; }
 .tpl-children { margin-left: 9px; padding-left: 14px; border-left: 1px dashed var(--line-strong); display: grid; gap: 4px; }
 .tpl-add { padding: 2px 0 4px; }
-.tpl-ctl { display: inline-flex; gap: 0; }
+.tpl-ctl { display: inline-flex; gap: 0; align-items: center; margin-left: auto; }
+.tpl-layout { grid-template-columns: minmax(0, 1fr) 280px; align-items: start; }
+.tpl-count { font-size: .8rem; }
+.tpl-move { width: 34px; padding: 2px; text-align: center; color: var(--muted); border-color: transparent; background: transparent; appearance: none; -webkit-appearance: none; cursor: pointer; }
+.tpl-move:hover { border-color: var(--line-strong); color: var(--accent); }
+.tpl-pick { color: var(--accent); border-style: dashed; }
+.tpl-confirm { margin: 2px 0; font-size: .85rem; }
+@media (max-width: 1100px) { .tpl-layout { grid-template-columns: minmax(0, 1fr); } }
+html[data-device="mobile"] .tpl-layout { grid-template-columns: minmax(0, 1fr); }
 details.panel > summary { cursor: pointer; }
 
 @media (max-width: 900px) {

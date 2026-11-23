@@ -11,8 +11,9 @@
     <button class="primary" @onclick="NewTemplate">New template…</button>
 </div>
 
-<div class="split">
-    @if (App.IsMobile)
+<div class="@(_editing ? "" : "split")">
+    @if (_editing) { }
+    else if (App.IsMobile)
     {
         <div class="m-picker">
             <select value="@(Selected?.Id.Value.ToString())" @onchange="e => Pick(new TemplateId(Guid.Parse(e.Value!.ToString()!)))" aria-label="Template">
@@ -39,7 +40,8 @@
             <div class="op-panel">
                 <div class="panel-head">
                     <h2>@_title</h2>
-                    <div class="row"><button @onclick="() => _editing = false">Cancel</button><button class="primary" @onclick="Publish">Publish</button></div>
+                    @{ var (built, problems) = _draft!.Build(); }
+                    <div class="row"><button @onclick="() => _editing = false">Cancel</button><button class="primary" disabled="@(problems.Count > 0)" @onclick="Publish">Publish</button></div>
                 </div>
                 <p class="muted">What the analysis shows and in which order. Tables the shown ones read are computed even when not listed.
                     Pinning a version keeps the object on it; latest follows the library.</p>
@@ -47,11 +49,34 @@
                 {
                     <div class="callout bad"><b>Publish refused.</b><ul>@foreach (var e in _errors) { <li>@e</li> }</ul></div>
                 }
-                <TemplateEditor T="_draft!" Changed="StateHasChanged" />
-                @{ var (_, problems) = _draft!.Build(); }
-                <div class="ed-foot">
-                    @if (problems.Count == 0) { <span class="ok-text">✓ @_draft.Root.CountObjects() table(s) shown. Publishing also checks the computed closure resolves.</span> }
-                    else { <div class="callout warn" style="margin:0"><b>To fix before publishing</b><ul>@foreach (var p in problems) { <li>@p</li> }</ul></div> }
+                <div class="grid tpl-layout">
+                    <div><TemplateEditor T="_draft!" Changed="() => _errors.Clear()" /></div>
+                    <div>
+                        <h4>Check</h4>
+                        @if (problems.Count > 0)
+                        {
+                            <div class="callout warn"><b>To fix before publishing</b><ul>@foreach (var p in problems) { <li>@p</li> }</ul></div>
+                        }
+                        else if (Manifest(built!, out var closureError) is not { } closure)
+                        {
+                            <div class="callout bad">@closureError</div>
+                        }
+                        else
+                        {
+                            <div class="callout ok">Ready to publish as v@(_draft.Version): @_draft.Root.CountObjects() table(s) shown.</div>
+                            <h4>Computed closure</h4>
+                            <p class="faint" style="font-size:12.5px">Every table the shown ones depend on is computed, shown or not.</p>
+                            var shownIds = built!.Objects().Select(o => o.Table.Table).ToHashSet();
+                            <table class="data list"><tbody>
+                            @foreach (var (id, ver) in closure.Pinned.OrderBy(p => App.Service.Library.Get(p.Key, p.Value).Name))
+                            {
+                                <tr><td class="left">@App.Service.Library.Get(id, ver).Name</td>
+                                    <td class="left faint">v@(ver.Value)</td>
+                                    <td class="left">@if (!shownIds.Contains(id)) { <span class="badge">not shown</span> }</td></tr>
+                            }
+                            </tbody></table>
+                        }
+                    </div>
                 </div>
             </div>
         }
@@ -109,9 +134,13 @@
 
     private void Pick(TemplateId id) { App.LibraryTemplate = id; _version = null; _editing = false; }
 
-    private ResolvedManifest? Manifest(AnalysisTemplate t)
+    private ResolvedManifest? Manifest(AnalysisTemplate t) => Manifest(t, out _);
+
+    private ResolvedManifest? Manifest(AnalysisTemplate t, out string? error)
     {
-        try { return ManifestBuilder.Build(t, App.Service.Library); } catch (InvalidOperationException) { return null; }
+        error = null;
+        try { return ManifestBuilder.Build(t, App.Service.Library); }
+        catch (Exception e) when (e is InvalidOperationException or KeyNotFoundException) { error = e.Message; return null; }
     }
 
     private void Edit()

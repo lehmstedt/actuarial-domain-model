@@ -111,6 +111,9 @@ tests/Actuarial.Domain.Tests/                xUnit tests
   The forms derive what the domain derives: a reference's grain comes from the chosen column, exhibit schemas from
   the statistics, a selectable method's ultimate key from the method table. Live checks run `SelfCheck`; cross-table
   checks stay at publish. A refused publish offers to add the dependents to the batch.
+  The template form's operations (`MoveTargets`/`MoveTo`, `Duplicate`) only allow well-formed trees (a folder never
+  holds an object, nothing moves inside itself); duplicates get fresh node ids. While editing, the template page shows
+  the computed closure live, including the closure error, and Publish stays disabled until the draft has no problems.
 - **Semantics decided along the way:**
   - Development period i is `DevKey(i·L, L)` and holds the cumulative at age (i+1)·L. The factor keyed by period
     i ≥ 1 develops age i·L → (i+1)·L ("12-24 ⇒ 12"). Period 0 has no factor and is not listed as needed.

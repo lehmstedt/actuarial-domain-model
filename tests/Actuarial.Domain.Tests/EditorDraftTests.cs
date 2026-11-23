@@ -182,6 +182,48 @@ public class EditorDraftTests
         Assert.Contains(r.Errors, e => e.Contains("choose a table"));
     }
 
+    [Fact]
+    public void Template_nodes_move_only_into_containers_that_can_hold_them()
+    {
+        var d = new Fixture().Svc.NewTemplate();
+        var col = d.Root.Children[0];
+        var obj = new TemplateNodeDraft { Kind = TemplateNodeKind.Object, Name = "x", Table = DemoSeed.Paid };
+        col.Children.Add(obj);
+        var folder = TemplateNodeDraft.Folder("F");
+        var inner = TemplateNodeDraft.Folder("Inner");
+        var col2 = TemplateNodeDraft.Collection("C2");
+        folder.Children.Add(inner);
+        inner.Children.Add(col2);
+        d.Root.Children.Add(folder);
+
+        Assert.Equal(new[] { col2 }, d.MoveTargets(obj));                  // collections only, not its own
+        Assert.DoesNotContain(inner, d.MoveTargets(folder));               // never inside itself
+        Assert.DoesNotContain(d.Root, d.MoveTargets(folder));              // already there
+        Assert.Contains(d.Root, d.MoveTargets(inner));
+
+        d.MoveTo(obj, col2);
+        Assert.Same(col2, d.ParentOf(obj));
+        Assert.Empty(col.Children);
+        Assert.Throws<InvalidOperationException>(() => d.MoveTo(folder, inner));
+        Assert.Equal("F › Inner › C2", d.PathOf(col2));
+    }
+
+    [Fact]
+    public void Duplicating_a_template_node_copies_it_with_fresh_ids_and_still_publishes()
+    {
+        var f = new Fixture();
+        var d = f.Svc.EditTemplate(DemoSeed.Standard);
+        var first = d.Root.Children[0];
+        var copy = d.Duplicate(first);
+
+        Assert.Same(copy, d.Root.Children[1]);
+        Assert.Equal(first.CountObjects(), copy.CountObjects());
+        Assert.Empty(copy.Children.Select(c => c.NodeId).Intersect(first.Children.Select(c => c.NodeId)));
+        Assert.Equal(d.All().Count(), d.All().Select(n => n.NodeId).Distinct().Count());
+        var r = f.Svc.PublishTemplate(d);
+        Assert.True(r.Ok, string.Join("; ", r.Errors));
+    }
+
     [Theory]
     [InlineData("Paid to date", "paid_to_date")]
     [InlineData("  Loss ratio (%) ", "loss_ratio")]

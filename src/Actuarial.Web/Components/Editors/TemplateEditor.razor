@@ -24,7 +24,24 @@
     private Library Lib => App.Service.Library;
     private IEnumerable<TableDefinition> Tables => Lib.TableIds.Select(id => Lib.FindLatest(id)!).OrderBy(t => t.KindLabel).ThenBy(t => t.Name);
 
-    private Task Set(Action a) { a(); return Changed.InvokeAsync(); }
+    private int _rev;                          // re-keys the one-shot selects (add, move) so they reset after use
+    private TemplateNodeDraft? _confirmRemove;
+
+    private Task Set(Action a) { a(); _rev++; return Changed.InvokeAsync(); }
+
+    private void Remove(TemplateNodeDraft parent, TemplateNodeDraft n)
+    {
+        if (n.Kind != TemplateNodeKind.Object && n.CountObjects() > 0 && _confirmRemove != n) { _confirmRemove = n; return; }
+        _confirmRemove = null;
+        parent.Children.Remove(n);
+    }
+
+    private void MoveTo(TemplateNodeDraft n, string? value)
+    {
+        if (Guid.TryParse(value, out var g) && T.All().FirstOrDefault(t => t.NodeId == g) is { } target) T.MoveTo(n, target);
+    }
+
+    private static string Plural(int n, string noun) => $"{n} {noun}{(n == 1 ? "" : "s")}";
 
     private static string NextName(TemplateNodeDraft parent, string stem)
     {
@@ -65,8 +82,31 @@
         <span class="tpl-ctl">
             <button class="small ghost" disabled="@(i == 0)" title="Move up" @onclick="() => Set(() => Move(parent, n, -1))">↑</button>
             <button class="small ghost" disabled="@(i == parent.Children.Count - 1)" title="Move down" @onclick="() => Set(() => Move(parent, n, 1))">↓</button>
-            <button class="small ghost danger" title="@(n.Kind == TemplateNodeKind.Object ? "Remove" : $"Remove with its {n.CountObjects()} table(s)")" @onclick="() => Set(() => parent.Children.Remove(n))">✕</button>
+            @{ var targets = T.MoveTargets(n).ToList(); }
+            @if (targets.Count > 0)
+            {
+                <select @key="(n.NodeId, _rev)" class="tpl-move" @onchange="e => Set(() => MoveTo(n, e.Value?.ToString()))"
+                        title="Move to another @(n.Kind == TemplateNodeKind.Object ? "collection" : "folder")" aria-label="Move @n.Name">
+                    <option value="">⇄</option>
+                    <option value="" disabled>Move to…</option>
+                    @foreach (var t in targets) { <option value="@t.NodeId">@T.PathOf(t)</option> }
+                </select>
+            }
+            <button class="small ghost" title="Duplicate" @onclick="() => Set(() => T.Duplicate(n))">⧉</button>
+            <button class="small ghost danger" title="Remove" @onclick="() => Set(() => Remove(parent, n))">✕</button>
         </span>
+    };
+
+    private RenderFragment Confirm(TemplateNodeDraft parent, TemplateNodeDraft n) => __builder =>
+    {
+        if (_confirmRemove != n) return;
+        <div class="callout warn tpl-confirm">
+            Remove <b>@n.Name</b> and the @Plural(n.CountObjects(), "table") inside it?
+            <span class="row" style="margin-top:6px">
+                <button class="small danger" @onclick="() => Set(() => Remove(parent, n))">Remove</button>
+                <button class="small" @onclick="() => _confirmRemove = null">Keep</button>
+            </span>
+        </div>
     };
 
     private RenderFragment Node(TemplateNodeDraft n, TemplateNodeDraft parent) => __builder =>
@@ -78,8 +118,10 @@
                     <div class="tpl-row">
                         <span class="tpl-ico">📁</span>
                         <input class="tpl-name" value="@n.Name" @oninput="e => Set(() => n.Name = e.Value?.ToString() ?? string.Empty)" aria-label="Folder name" />
+                        <span class="faint tpl-count">@Plural(n.CountObjects(), "table")</span>
                         @Controls(parent, n)
                     </div>
+                    @Confirm(parent, n)
                     <div class="tpl-children">
                         @foreach (var c in n.Children) { @Node(c, n) }
                         <div class="row tpl-add">
@@ -94,12 +136,14 @@
                     <div class="tpl-row">
                         <span class="tpl-ico">▤</span>
                         <input class="tpl-name" value="@n.Name" @oninput="e => Set(() => n.Name = e.Value?.ToString() ?? string.Empty)" aria-label="Collection name" />
+                        <span class="faint tpl-count">@Plural(n.CountObjects(), "table")</span>
                         @Controls(parent, n)
                     </div>
+                    @Confirm(parent, n)
                     <div class="tpl-children">
                         @foreach (var c in n.Children) { @Node(c, n) }
                         <div class="tpl-add">
-                            <select class="mini" value="" @onchange="e => Set(() => AddTable(n, e.Value?.ToString()))" aria-label="Add a table">
+                            <select @key="(n.NodeId, _rev)" class="mini tpl-pick" @onchange="e => Set(() => AddTable(n, e.Value?.ToString()))" aria-label="Add a table">
                                 <option value="">+ Add a table…</option>
                                 @foreach (var g in Tables.GroupBy(t => t.KindLabel))
                                 {
@@ -125,7 +169,7 @@
                         @if (versions.Count > 0)
                         {
                             <select class="mini" value="@(n.PinnedVersion?.ToString() ?? string.Empty)" @onchange="e => Set(() => n.PinnedVersion = int.TryParse(e.Value?.ToString(), out var v) ? v : null)" aria-label="Version">
-                                <option value="">latest</option>
+                                <option value="">latest (v@(versions.Max()))</option>
                                 @foreach (var v in versions) { <option value="@v">pin v@(v)</option> }
                             </select>
                         }

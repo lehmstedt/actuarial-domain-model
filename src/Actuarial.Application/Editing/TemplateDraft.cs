@@ -43,6 +43,22 @@ public sealed class TemplateNodeDraft
 
     public int CountObjects() => Kind == TemplateNodeKind.Object ? 1 : Children.Sum(c => c.CountObjects());
 
+    /// <summary>Folders hold folders or collections; collections hold objects; objects hold nothing.</summary>
+    public bool CanHold(TemplateNodeKind child) => Kind switch
+    {
+        TemplateNodeKind.Folder     => child is TemplateNodeKind.Folder or TemplateNodeKind.Collection,
+        TemplateNodeKind.Collection => child is TemplateNodeKind.Object,
+        _                           => false
+    };
+
+    /// <summary>A deep copy with fresh node ids.</summary>
+    public TemplateNodeDraft Copy()
+    {
+        var c = new TemplateNodeDraft { Kind = Kind, Name = Name, Table = Table, PinnedVersion = PinnedVersion };
+        c.Children.AddRange(Children.Select(x => x.Copy()));
+        return c;
+    }
+
     internal TemplateNode Build(List<string> problems)
     {
         var name = Name.Trim();
@@ -76,6 +92,45 @@ public sealed class TemplateDraft
         Id = new TemplateId(Guid.NewGuid()), Version = 1, Name = "New template",
         Root = new TemplateNodeDraft { Kind = TemplateNodeKind.Folder, Children = { TemplateNodeDraft.Collection("Tables") } }
     };
+
+    public IEnumerable<TemplateNodeDraft> All()
+    {
+        IEnumerable<TemplateNodeDraft> W(TemplateNodeDraft n) => n.Children.SelectMany(W).Prepend(n);
+        return W(Root);
+    }
+
+    public TemplateNodeDraft? ParentOf(TemplateNodeDraft node) => node == Root ? null : Root.ParentOf(node);
+
+    /// <summary>Containers <paramref name="node"/> can move into: the right kind, not itself or anything inside it, not its current parent.</summary>
+    public IEnumerable<TemplateNodeDraft> MoveTargets(TemplateNodeDraft node)
+    {
+        var parent = ParentOf(node);
+        return All().Where(t => t.CanHold(node.Kind) && t != parent && t != node && node.ParentOf(t) is null);
+    }
+
+    public void MoveTo(TemplateNodeDraft node, TemplateNodeDraft target)
+    {
+        if (!MoveTargets(node).Contains(target)) throw new InvalidOperationException("The node cannot move there.");
+        ParentOf(node)!.Children.Remove(node);
+        target.Children.Add(node);
+    }
+
+    /// <summary>Copies a node (and what it holds) right after itself.</summary>
+    public TemplateNodeDraft Duplicate(TemplateNodeDraft node)
+    {
+        var parent = ParentOf(node) ?? throw new InvalidOperationException("The root folder cannot be duplicated.");
+        var copy = node.Copy();
+        parent.Children.Insert(parent.Children.IndexOf(node) + 1, copy);
+        return copy;
+    }
+
+    /// <summary>Breadcrumb for a container, used to label move targets.</summary>
+    public string PathOf(TemplateNodeDraft node)
+    {
+        var parts = new List<string>();
+        for (var n = node; n is not null && n != Root; n = ParentOf(n)) parts.Insert(0, n.Name);
+        return parts.Count == 0 ? "Top level" : string.Join(" › ", parts);
+    }
 
     /// <summary>The root folder carries the template's name.</summary>
     public (AnalysisTemplate? Template, IReadOnlyList<string> Problems) Build()

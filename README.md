@@ -43,7 +43,7 @@ resizes and rotation.
 | Library | Browse tables, versions, schema, dependencies and dependents | Table library |
 | | Publish a new version or a new table with a form per table kind; publish several atomically (*Publish another table alongside…*) | Table library → *Edit → new version* / *New table…* |
 | | See a breaking change refused, with the dependents that break | (same) |
-| Templates | Browse the tree and its computed dependency closure; publish a version | Templates |
+| Templates | Browse the tree and its computed dependency closure; edit it in a form (add, reorder, move, duplicate, pin versions) with a live closure check; publish a version | Templates → *Edit → new version* / *New template…* |
 | Data | Create segments by attribute filter; take content-hashed snapshots | Segments & data |
 | Analysis | Create an analysis (segment, valuation date, structure, template) | Analyses → *New analysis* |
 | | Select factors per age, statistics, methods or averages per exposure period; enter values and overrides | Analysis → tables |
