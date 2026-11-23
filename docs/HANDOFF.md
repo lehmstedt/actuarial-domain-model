@@ -95,10 +95,6 @@ tests/Actuarial.Domain.Tests/                xUnit tests
   the valuation date is a month end inside the last exposure period. `TriangleStructure.Validate`, enforced by
   reshape and roll-forward. The app adds that the (quarterly) data needs multiples of 3.
 - **Templates** have a `TemplateLibrary`: versioned, published with tree checks, object resolution and a closure build.
-  They are edited in a form, not JSON: `TemplateDraft` (application layer) is a mutable working copy whose operations
-  (add, remove, reorder, move, duplicate, change table or pin) keep the tree well formed, and `Build()` turns it back
-  into an immutable `AnalysisTemplate` for `PublishTemplate`. Node ids are kept from the source version. The editor
-  shows draft problems and the computed closure live; publish remains the only gate.
 - **Version assignment.** The library allocates: a new table is v1, the next version is always latest + 1
   (`NextVersion`); publish refuses anything else. One version per table per batch.
 - **Sign-off** computes results and a SHA-256 hash over engine version, valuation date, structure, data hash, manifest,
@@ -109,6 +105,12 @@ tests/Actuarial.Domain.Tests/                xUnit tests
 - **Persistence.** JSON documents (`WorkspaceDocument`), with ids as strings and polymorphic definitions tagged by
   `$kind`. Definitions restore without re-validation (they were valid when published). In the app, localStorage.
 - **Audit trail.** Operations log an `AuditEvent` carrying the `MigrationReport`.
+- **Editors.** Tables and templates are created and edited through forms, not JSON. `Actuarial.Application/Editing`
+  holds mutable drafts (`TableDraft`, `TemplateDraft`) that build immutable definitions; `TableBatch` holds several
+  drafts that publish atomically and may reference each other (a floating ref to a batch member means the draft).
+  The forms derive what the domain derives: a reference's grain comes from the chosen column, exhibit schemas from
+  the statistics, a selectable method's ultimate key from the method table. Live checks run `SelfCheck`; cross-table
+  checks stay at publish. A refused publish offers to add the dependents to the batch.
 - **Semantics decided along the way:**
   - Development period i is `DevKey(i·L, L)` and holds the cumulative at age (i+1)·L. The factor keyed by period
     i ≥ 1 develops age i·L → (i+1)·L ("12-24 ⇒ 12"). Period 0 has no factor and is not listed as needed.

@@ -1,0 +1,226 @@
+@using Actuarial.Application.Editing
+@* The form for one table draft. Each kind shows only what it needs; shapes the domain derives (exhibit schemas,
+   development outputs, ultimate keys of selectable methods) are filled in rather than asked for. *@
+
+<div class="form-grid">
+    <label class="field wide"><span>Name</span>
+        <input value="@D.Name" @oninput="e => Set(() => D.Name = e.Value?.ToString() ?? string.Empty)" placeholder="Table name" />
+    </label>
+    <div class="field"><span>Kind</span><div class="static">@TableKinds.Label(D.Kind)</div></div>
+    <div class="field"><span>Version</span><div class="static">v@(D.Version)@(D.IsNew ? " (new table)" : "")</div></div>
+</div>
+
+@switch (D.Kind)
+{
+    case TableKind.Input:
+        <section class="ed-section">
+            <h3>Source</h3>
+            <div class="seg">
+                <button class="@(D.FromData ? "on" : "")" @onclick="() => Set(() => { D.FromData = true; D.SourceChanged(); D.ClaimFieldChanged(); })">Claim data</button>
+                <button class="@(!D.FromData ? "on" : "")" @onclick="() => Set(() => { D.FromData = false; D.SourceChanged(); })">Formula over other tables</button>
+            </div>
+            @if (D.FromData)
+            {
+                <div class="form-grid" style="margin-top:10px">
+                    <label class="field"><span>Claim field</span>
+                        <select value="@D.ClaimField" @onchange="e => Set(() => { D.ClaimField = e.Value!.ToString()!; D.ClaimFieldChanged(); })">
+                            @foreach (var f in TableDraft.ClaimFields) { <option value="@f">@FieldLabel(f)</option> }
+                        </select>
+                    </label>
+                </div>
+            }
+            else
+            {
+                <p class="muted">The formula computes the table's single column. Add a reference for each table it reads and use it as <code>$1</code>, <code>$2</code>…</p>
+                <FormulaField Batch="Batch" Self="D" @bind-Expression="D.Expression" Refs="D.FormulaRefs" Target="D.Columns.FirstOrDefault()?.Grain" Changed="Changed" />
+            }
+        </section>
+        <section class="ed-section">
+            <h3>Output @(D.Columns.Count == 1 ? "column" : "columns")</h3>
+            <table class="data list edit-table">
+                <thead><tr><th>Key</th><th>Measure</th><th>Basis</th><th>Shape</th><th></th></tr></thead>
+                <tbody>
+                @foreach (var c in D.Columns)
+                {
+                    <tr>
+                        <td><input class="mono key-in" value="@c.Key" spellcheck="false" @onchange="e => Set(() => c.Key = e.Value?.ToString() ?? string.Empty)" aria-label="Key" /></td>
+                        <td><EnumSelect TEnum="MeasureKind" Value="c.Measure" ValueChanged="v => Set(() => c.Measure = v)" /></td>
+                        <td><EnumSelect TEnum="BasisKind" Value="c.Basis" ValueChanged="v => Set(() => c.Basis = v)" /></td>
+                        <td>
+                            <select value="@c.Grain" @onchange="e => Set(() => c.Grain = Enum.Parse<GrainKind>(e.Value!.ToString()!))" aria-label="Shape">
+                                @foreach (var g in InputGrains) { <option value="@g">@Fmt.Grain(g)</option> }
+                            </select>
+                        </td>
+                        <td class="num">@if (D.Columns.Count > 1) { <button class="small ghost danger" @onclick="() => Set(() => D.Columns.Remove(c))">✕</button> }</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+            @if (D.FromData) { <button class="small" @onclick="() => Set(() => D.Columns.Add(new SchemaColumnDraft { Key = D.ClaimField + D.Columns.Count, Measure = D.Columns[0].Measure, Basis = D.Columns[0].Basis, Grain = D.Columns[0].Grain }))">+ Column</button> }
+        </section>
+        break;
+
+    case TableKind.Development:
+        <section class="ed-section">
+            <h3>Triangle to develop</h3>
+            <p class="muted">A cumulative triangle. Age-to-age factors, the selected factors, CDFs@(D.IncludeTail ? " and a tail factor" : "") are produced automatically.</p>
+            <RequirementPicker Batch="Batch" Self="D" Req="D.Source" Accept="c => c.Grain == GrainKind.DevelopmentCell && c.Basis == BasisKind.Cumulative"
+                               Changed="() => Set(() => { D.Source.Grain = GrainKind.DevelopmentCell; D.Source.Basis = BasisKind.Cumulative; D.Source.Measure = null; })" />
+            <label class="check"><input type="checkbox" checked="@D.IncludeTail" @onchange="e => Set(() => D.IncludeTail = (bool)e.Value!)" /> Include a tail factor (entered by the user, default 1)</label>
+        </section>
+        <section class="ed-section">
+            <h3>Statistics offered per age</h3>
+            <StatisticsEditor Items="D.Statistics" Original="OriginalStatistics" Changed="Changed" />
+        </section>
+        break;
+
+    case TableKind.Exhibit:
+        <section class="ed-section">
+            <h3>Analysed column</h3>
+            <p class="muted">A triangle gives one statistic per development age; a per-exposure-period column (e.g. loss ratios) gives single values.</p>
+            <RequirementPicker Batch="Batch" Self="D" Label="Values" Req="D.Values" Accept="c => c.Grain is GrainKind.DevelopmentCell or GrainKind.ExposurePeriod" Changed="ValuesChanged" />
+            @if (D.Weights is { } w)
+            {
+                <div class="row" style="align-items:flex-start;margin-top:8px">
+                    <div class="spacer"><RequirementPicker Batch="Batch" Self="D" Label="Weights" Req="w" Accept="c => c.Grain == D.Values.Grain" Changed="Changed" /></div>
+                    <button class="small ghost danger" @onclick="() => Set(() => D.Weights = null)">✕</button>
+                </div>
+            }
+            else
+            {
+                <button class="small" style="margin-top:8px" @onclick="() => Set(() => D.Weights = new RequirementDraft { Grain = D.Values.Grain })">+ Weights for the volume-weighted average</button>
+            }
+        </section>
+        <section class="ed-section">
+            <h3>Statistics</h3>
+            <StatisticsEditor Items="D.Statistics" Original="OriginalStatistics" Changed="Changed" />
+            <div class="form-grid" style="margin-top:12px">
+                <label class="field"><span>Output measure</span><EnumSelect TEnum="MeasureKind" Value="D.OutputMeasure" ValueChanged="v => Set(() => D.OutputMeasure = v)" /></label>
+                <label class="field"><span>Output basis</span><EnumSelect TEnum="BasisKind" Value="D.OutputBasis" ValueChanged="v => Set(() => D.OutputBasis = v)" /></label>
+            </div>
+            <p class="muted small-note">Outputs: @string.Join(", ", D.Statistics.Select(s => s.Key).Append("selected")) — @Fmt.Grain(D.Values.Grain == GrainKind.DevelopmentCell ? GrainKind.DevelopmentPeriod : GrainKind.Scalar).</p>
+        </section>
+        break;
+
+    case TableKind.Method:
+        <section class="ed-section">
+            <h3>Columns <span class="faint">(per exposure period)</span></h3>
+            <p class="muted">A formula can use references (<code>$1</code>…) and the other columns by key. User-input columns are typed in the analysis. Mark the ultimate with ★ — other tables (e.g. a selection) read it.</p>
+            @foreach (var c in D.MethodColumns)
+            {
+                var idx = D.MethodColumns.IndexOf(c);
+                <div class="col-card @(c.Key == D.UltimateKey ? "ult" : "")">
+                    <div class="col-head">
+                        <button class="star @(c.Key == D.UltimateKey ? "on" : "")" title="The ultimate column" @onclick="() => Set(() => { D.UltimateKey = c.Key; c.Measure = MeasureKind.Ultimate; })">★</button>
+                        <input class="label-in" value="@c.Label" placeholder="Label" @oninput="e => Set(() => { var wasUlt = D.UltimateKey == c.Key; c.Label = e.Value?.ToString() ?? string.Empty; c.LabelChanged(); if (wasUlt) D.UltimateKey = c.Key; })" aria-label="Label" />
+                        <input class="mono key-in" value="@c.Key" spellcheck="false" title="Key: how formulas and analyses refer to this column" aria-label="Key"
+                               @onchange="e => Set(() => { var wasUlt = D.UltimateKey == c.Key; c.Key = e.Value?.ToString() ?? string.Empty; c.AutoKey = false; if (wasUlt) D.UltimateKey = c.Key; })" />
+                        <EnumSelect TEnum="MeasureKind" Value="c.Measure" ValueChanged="v => Set(() => c.Measure = v)" />
+                        <div class="seg">
+                            <button class="@(c.IsFormula ? "on" : "")" @onclick="() => Set(() => c.IsFormula = true)">Formula</button>
+                            <button class="@(!c.IsFormula ? "on" : "")" @onclick="() => Set(() => c.IsFormula = false)">User input</button>
+                        </div>
+                        <span class="spacer"></span>
+                        <button class="small ghost" disabled="@(idx == 0)" title="Move up" @onclick="() => Set(() => { D.MethodColumns.RemoveAt(idx); D.MethodColumns.Insert(idx - 1, c); })">↑</button>
+                        <button class="small ghost danger" title="Remove" @onclick="() => Set(() => D.MethodColumns.Remove(c))">✕</button>
+                    </div>
+                    @if (c.IsFormula)
+                    {
+                        <FormulaField Batch="Batch" Self="D" @bind-Expression="c.Expression" Refs="c.Refs" Target="GrainKind.ExposurePeriod"
+                                      LocalColumns="D.MethodColumns.Where(o => o != c && o.Key.Length > 0).Select(o => o.Key).ToList()" Changed="Changed" />
+                    }
+                    else { <p class="faint small-note">Entered per exposure period in each analysis.</p> }
+                </div>
+            }
+            <button class="small" @onclick="AddMethodColumn">+ Column</button>
+        </section>
+        break;
+
+    case TableKind.Selection:
+        <section class="ed-section">
+            <h3>Selectable methods</h3>
+            <p class="muted">Per exposure period the user picks one of these methods' ultimates, or an average of them.</p>
+            @{ var methods = Batch.Sources(D).Where(s => s.Kind == TableKind.Method).ToList(); }
+            @if (methods.Count == 0) { <p class="muted">There is no method table yet.</p> }
+            <div class="check-list">
+                @foreach (var m in methods)
+                {
+                    var choice = D.Methods.FirstOrDefault(x => x.Table == m.Id);
+                    <div class="row">
+                        <label class="check"><input type="checkbox" checked="@(choice is not null)" @onchange="e => ToggleMethod(m.Id, (bool)e.Value!)" /> @m.Name</label>
+                        @if (choice is not null && m.Versions.Count > 0)
+                        {
+                            <select class="mini" value="@(choice.PinnedVersion?.ToString() ?? string.Empty)" @onchange="e => Set(() => choice.PinnedVersion = int.TryParse(e.Value?.ToString(), out var v) ? v : null)" aria-label="Version">
+                                <option value="">latest</option>
+                                @foreach (var v in m.Versions) { <option value="@v">pin v@(v)</option> }
+                            </select>
+                        }
+                    </div>
+                }
+            </div>
+        </section>
+        <section class="ed-section">
+            <h3>Averages offered</h3>
+            <label class="check"><input type="checkbox" checked="@D.Arithmetic" @onchange="e => Set(() => D.Arithmetic = (bool)e.Value!)" /> Arithmetic average of the methods</label>
+            <label class="check"><input type="checkbox" checked="@D.Weighted" @onchange="e => Set(() => D.Weighted = (bool)e.Value!)" /> Weighted average (one weight per method, entered in the analysis)</label>
+        </section>
+        <section class="ed-section">
+            <h3>Shown alongside</h3>
+            <p class="muted">Columns per exposure period displayed for context, e.g. premium.</p>
+            @foreach (var r in D.SelectionInputs)
+            {
+                <div class="row" style="align-items:flex-start;margin-bottom:6px">
+                    <div class="spacer"><RequirementPicker Batch="Batch" Self="D" Req="r" Accept="c => c.Grain == GrainKind.ExposurePeriod" Changed="Changed" /></div>
+                    <button class="small ghost danger" @onclick="() => Set(() => D.SelectionInputs.Remove(r))">✕</button>
+                </div>
+            }
+            <button class="small" @onclick="() => Set(() => D.SelectionInputs.Add(new RequirementDraft { Grain = GrainKind.ExposurePeriod }))">+ Column</button>
+        </section>
+        break;
+}
+
+@code {
+    [Parameter, EditorRequired] public TableBatch Batch { get; set; } = null!;
+    [Parameter, EditorRequired] public TableDraft D { get; set; } = null!;
+    [Parameter] public TableDefinition? Original { get; set; }
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private IReadOnlyCollection<string> OriginalStatistics =>
+        Original is ExhibitDefinition ex ? ex.Statistics.Select(s => s.Key).ToList() : Array.Empty<string>();
+
+    private IEnumerable<GrainKind> InputGrains => D.FromData
+        ? new[] { GrainKind.DevelopmentCell, GrainKind.ExposurePeriod }
+        : Enum.GetValues<GrainKind>();
+
+    private static string FieldLabel(string f) => f switch
+    {
+        "paid" => "Paid losses (triangle)",
+        "incurred" => "Incurred losses (triangle)",
+        "reported_count" => "Reported claim counts (triangle)",
+        _ => "Earned premium (per exposure period)"
+    };
+
+    private Task Set(Action a) { a(); return Changed.InvokeAsync(); }
+
+    private Task ValuesChanged()
+    {
+        if (D.Weights is { } w && w.Grain != D.Values.Grain) { w.Table = null; w.Column = ""; w.Grain = D.Values.Grain; }
+        return Changed.InvokeAsync();
+    }
+
+    private Task AddMethodColumn()
+    {
+        var n = D.MethodColumns.Count + 1;
+        var key = $"column_{n}";
+        while (D.MethodColumns.Any(c => c.Key == key)) key = $"column_{++n}";
+        D.MethodColumns.Add(new MethodColumnDraft { Label = "", Key = key, AutoKey = true });
+        return Changed.InvokeAsync();
+    }
+
+    private Task ToggleMethod(TableId id, bool on)
+    {
+        if (on && D.Methods.All(m => m.Table != id)) D.Methods.Add(new MethodChoiceDraft { Table = id });
+        if (!on) D.Methods.RemoveAll(m => m.Table == id);
+        return Changed.InvokeAsync();
+    }
+}

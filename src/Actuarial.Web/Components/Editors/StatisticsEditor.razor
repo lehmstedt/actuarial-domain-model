@@ -1,0 +1,81 @@
+@using Actuarial.Application.Editing
+@* The statistics an exhibit offers. Keys identify selections in analyses, so renaming one on an existing table
+   parks the selections that used it. *@
+
+<table class="data list edit-table">
+    <thead><tr><th>Statistic</th><th>Over</th><th>Key</th><th></th></tr></thead>
+    <tbody>
+    @foreach (var s in Items)
+    {
+        <tr>
+            <td>
+                <select value="@s.Kind" @onchange="e => Set(s, () => s.Kind = Enum.Parse<StatisticKind>(e.Value!.ToString()!))" aria-label="Statistic">
+                    @foreach (var k in Enum.GetValues<StatisticKind>()) { <option value="@k">@Fmt.Statistic(k)</option> }
+                </select>
+            </td>
+            <td>
+                @if (StatisticDraft.UsesWindow(s.Kind))
+                {
+                    <span class="row nowrap">
+                        <select value="@(s.Window is null ? "all" : "last")" aria-label="Window"
+                                @onchange="e => SetWindow(s, e.Value?.ToString())">
+                            <option value="all">all periods</option><option value="last">latest</option>
+                        </select>
+                        @if (s.Window is { } w)
+                        {
+                            <input type="number" min="1" max="50" class="num-in" value="@w" aria-label="Periods"
+                                   @onchange="e => Set(s, () => s.Window = int.TryParse(e.Value?.ToString(), out var n) && n > 0 ? n : 1)" />
+                        }
+                    </span>
+                }
+                else { <span class="faint">@(s.Kind == StatisticKind.Custom ? "entered by the user" : "latest diagonal")</span> }
+            </td>
+            <td><input class="mono key-in" value="@s.Key" aria-label="Key" spellcheck="false"
+                       @onchange="e => Set(s, () => { s.Key = e.Value?.ToString() ?? string.Empty; s.AutoKey = false; })" />
+                @if (Original.Contains(s.Key) is false && Original.Count > 0) { <span class="badge info" title="Not offered by the current version">new</span> }
+            </td>
+            <td class="num">
+                <button class="small ghost" disabled="@(Items.IndexOf(s) == 0)" title="Move up" @onclick="() => Move(s, -1)">↑</button>
+                <button class="small ghost danger" title="Remove" @onclick="() => Remove(s)">✕</button>
+            </td>
+        </tr>
+    }
+    </tbody>
+</table>
+@if (Removed.Any())
+{
+    <p class="muted small-note">Removing @string.Join(", ", Removed.Select(k => $"'{k}'")) — analyses that upgrade will park selections that used it.</p>
+}
+<button class="small" @onclick="Add">+ Statistic</button>
+
+@code {
+    [Parameter, EditorRequired] public List<StatisticDraft> Items { get; set; } = null!;
+    /// <summary>Keys offered by the version being replaced (empty for a new table).</summary>
+    [Parameter] public IReadOnlyCollection<string> Original { get; set; } = Array.Empty<string>();
+    [Parameter] public EventCallback Changed { get; set; }
+
+    private IEnumerable<string> Removed => Original.Where(k => Items.All(s => s.Key != k));
+
+    private Task SetWindow(StatisticDraft s, string? mode) => Set(s, () => s.Window = mode == "all" ? null : s.Window ?? 5);
+
+    private Task Set(StatisticDraft s, Action a) { a(); s.Refresh(); return Changed.InvokeAsync(); }
+
+    private Task Add()
+    {
+        var taken = Items.Select(i => i.Key).ToHashSet();
+        var candidates = new (StatisticKind, int?)[] { (StatisticKind.VolumeWeightedAverage, null), (StatisticKind.VolumeWeightedAverage, 5), (StatisticKind.SimpleAverage, 5), (StatisticKind.SimpleAverage, 3), (StatisticKind.Medial, 5), (StatisticKind.Latest, null), (StatisticKind.VolumeWeightedAverage, 3) };
+        var (k, w) = candidates.FirstOrDefault(c => !taken.Contains(StatisticDraft.SuggestKey(c.Item1, c.Item2)), (StatisticKind.SimpleAverage, Items.Count + 1));
+        Items.Add(StatisticDraft.New(k, w));
+        return Changed.InvokeAsync();
+    }
+
+    private Task Remove(StatisticDraft s) { Items.Remove(s); return Changed.InvokeAsync(); }
+
+    private Task Move(StatisticDraft s, int by)
+    {
+        var i = Items.IndexOf(s);
+        Items.RemoveAt(i);
+        Items.Insert(Math.Clamp(i + by, 0, Items.Count), s);
+        return Changed.InvokeAsync();
+    }
+}

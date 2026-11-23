@@ -1,3 +1,4 @@
+@using Actuarial.Application.Editing
 @inherits AppComponent
 
 <div class="page-head">
@@ -7,12 +8,11 @@
            points at a library table (the same table may appear more than once). What gets computed is the template's full
            dependency closure, including tables the template does not show.</p>
     </div>
-    <button @onclick="NewTemplate">New template…</button>
+    <button class="primary" @onclick="NewTemplate">New template…</button>
 </div>
 
-<div class="@(_editing ? "" : "split")">
-    @if (_editing) { }
-    else if (App.IsMobile)
+<div class="split">
+    @if (App.IsMobile)
     {
         <div class="m-picker">
             <select value="@(Selected?.Id.Value.ToString())" @onchange="e => Pick(new TemplateId(Guid.Parse(e.Value!.ToString()!)))" aria-label="Template">
@@ -34,51 +34,24 @@
     </div>
     }
     <div>
-        @if (_editing && _draft is not null)
+        @if (_editing)
         {
-            var problems = _draft.Problems();
-            string? closureError = null;
-            var closure = problems.Count == 0 ? Manifest(_draft.Build(), out closureError) : null;
             <div class="op-panel">
                 <div class="panel-head">
                     <h2>@_title</h2>
-                    <div class="row"><button @onclick="() => _editing = false">Cancel</button><button class="primary" disabled="@(problems.Count > 0)" @onclick="Publish">Publish</button></div>
+                    <div class="row"><button @onclick="() => _editing = false">Cancel</button><button class="primary" @onclick="Publish">Publish</button></div>
                 </div>
-                <p class="muted">Folders hold collections or other folders; collections hold tables. A table can follow its latest
-                    version or be pinned to one. Use the label to show a table under another name, and add the same table
-                    more than once if it helps the reader.</p>
+                <p class="muted">What the analysis shows and in which order. Tables the shown ones read are computed even when not listed.
+                    Pinning a version keeps the object on it; latest follows the library.</p>
                 @if (_errors.Count > 0)
                 {
                     <div class="callout bad"><b>Publish refused.</b><ul>@foreach (var e in _errors) { <li>@e</li> }</ul></div>
                 }
-                <div class="grid ted-layout">
-                    <TemplateEditor Draft="_draft" OnChange="() => _errors.Clear()" />
-                    <div>
-                        <h4>Check</h4>
-                        @if (problems.Count > 0)
-                        {
-                            <div class="callout warn"><ul>@foreach (var p in problems) { <li>@p</li> }</ul></div>
-                        }
-                        else if (closure is null)
-                        {
-                            <div class="callout bad">@closureError</div>
-                        }
-                        else
-                        {
-                            <div class="callout ok">Ready to publish as v@(_draft.Version.Value).</div>
-                            <h4>Computed closure</h4>
-                            <p class="faint" style="font-size:12.5px">Every table these objects depend on is computed, shown or not.</p>
-                            var shownIds = _draft.All().Where(n => n.Table is not null).Select(n => n.Table!.Value).ToHashSet();
-                            <table class="data list"><tbody>
-                            @foreach (var (id, ver) in closure.Pinned.OrderBy(p => App.Service.Library.Get(p.Key, p.Value).Name))
-                            {
-                                <tr><td class="left">@App.Service.Library.Get(id, ver).Name</td>
-                                    <td class="left faint">v@(ver.Value)</td>
-                                    <td class="left">@if (!shownIds.Contains(id)) { <span class="badge">not shown</span> }</td></tr>
-                            }
-                            </tbody></table>
-                        }
-                    </div>
+                <TemplateEditor T="_draft!" Changed="StateHasChanged" />
+                @{ var (_, problems) = _draft!.Build(); }
+                <div class="ed-foot">
+                    @if (problems.Count == 0) { <span class="ok-text">✓ @_draft.Root.CountObjects() table(s) shown. Publishing also checks the computed closure resolves.</span> }
+                    else { <div class="callout warn" style="margin:0"><b>To fix before publishing</b><ul>@foreach (var p in problems) { <li>@p</li> }</ul></div> }
                 </div>
             </div>
         }
@@ -126,8 +99,8 @@
 
 @code {
     private bool _editing;
-    private TemplateDraft? _draft;
     private string _title = "";
+    private TemplateDraft? _draft;
     private List<string> _errors = new();
     private TemplateVersion? _version;
 
@@ -136,36 +109,30 @@
 
     private void Pick(TemplateId id) { App.LibraryTemplate = id; _version = null; _editing = false; }
 
-    private ResolvedManifest? Manifest(AnalysisTemplate t) => Manifest(t, out _);
-
-    private ResolvedManifest? Manifest(AnalysisTemplate t, out string? error)
+    private ResolvedManifest? Manifest(AnalysisTemplate t)
     {
-        error = null;
-        try { return ManifestBuilder.Build(t, App.Service.Library); }
-        catch (Exception e) when (e is InvalidOperationException or KeyNotFoundException) { error = e.Message; return null; }
+        try { return ManifestBuilder.Build(t, App.Service.Library); } catch (InvalidOperationException) { return null; }
     }
 
     private void Edit()
     {
-        var d = App.Service.DraftNextTemplateVersion(Selected!.Id);
-        _title = $"Publish {d.Name} v{d.Version.Value}";
-        _draft = TemplateDraft.From(d);
+        _draft = App.Service.EditTemplate(Selected!.Id);
+        _title = $"Publish {_draft.Name} v{_draft.Version}";
         _editing = true; _errors.Clear();
     }
 
     private void NewTemplate()
     {
+        _draft = App.Service.NewTemplate();
         _title = "New template";
-        _draft = TemplateDraft.New("New template");
         _editing = true; _errors.Clear();
     }
 
     private void Publish()
     {
         _errors.Clear();
-        var t = _draft!.Build();
-        var r = App.Service.PublishTemplate(t);
-        if (r.Ok) { App.Toast($"Published {t.Name} v{t.Version.Value}."); App.LibraryTemplate = t.Id; _version = null; _editing = false; _draft = null; }
+        var r = App.Service.PublishTemplate(_draft!);
+        if (r.Ok) { App.Toast($"Published {_draft!.Name} v{_draft.Version}."); App.LibraryTemplate = _draft.Id; _version = null; _editing = false; }
         else _errors = r.Errors.ToList();
     }
 }

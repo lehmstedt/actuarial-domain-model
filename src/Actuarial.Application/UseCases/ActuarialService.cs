@@ -1,5 +1,6 @@
 using Actuarial.Application.Calculation;
 using Actuarial.Application.Data;
+using Actuarial.Application.Editing;
 using Actuarial.Application.Persistence;
 using Actuarial.Domain;
 
@@ -79,19 +80,19 @@ public sealed class ActuarialService
         return result;
     }
 
-    public static IReadOnlyList<TableDefinition> ParseTables(string json)
+    /// <summary>A form for the next version of a table, prefilled from its latest version.</summary>
+    public TableDraft EditTable(TableId id) =>
+        TableDraft.Edit(Library.FindLatest(id) ?? throw new UseCaseException("Unknown table."), Library.NextVersion(id));
+
+    /// <summary>A form for a new table, prefilled from what the library offers.</summary>
+    public TableDraft NewTable(TableKind kind) => TableDraft.New(kind, Library);
+
+    /// <summary>Builds the batch's definitions and publishes them atomically.</summary>
+    public PublishResult PublishTables(TableBatch batch)
     {
-        json = json.Trim();
-        try
-        {
-            return json.StartsWith('[')
-                ? Json.Deserialize<List<TableDefinition>>(json)
-                : new[] { Json.Deserialize<TableDefinition>(json) };
-        }
-        catch (Exception e) when (e is System.Text.Json.JsonException or NotSupportedException or FormatException or ArgumentException)
-        {
-            throw new UseCaseException($"The JSON could not be read: {e.Message}");
-        }
+        var (defs, problems) = batch.Build();
+        if (defs is null) throw new UseCaseException(string.Join(" ", problems));
+        return PublishTables(defs);
     }
 
     // ───────────────────────── Templates ─────────────────────────
@@ -109,13 +110,16 @@ public sealed class ActuarialService
         return r;
     }
 
-    public static AnalysisTemplate ParseTemplate(string json)
+    public TemplateDraft EditTemplate(TemplateId id) =>
+        TemplateDraft.Edit(Templates.FindLatest(id) ?? throw new UseCaseException("Unknown template."), Templates.NextVersion(id));
+
+    public TemplateDraft NewTemplate() => TemplateDraft.New();
+
+    /// <summary>Builds the template from its form and publishes it. Form problems are returned like publish errors.</summary>
+    public TemplatePublishResult PublishTemplate(TemplateDraft draft)
     {
-        try { return Json.Deserialize<AnalysisTemplate>(json); }
-        catch (Exception e) when (e is System.Text.Json.JsonException or NotSupportedException or FormatException or ArgumentException)
-        {
-            throw new UseCaseException($"The JSON could not be read: {e.Message}");
-        }
+        var (t, problems) = draft.Build();
+        return t is null ? new TemplatePublishResult(problems) : PublishTemplate(t);
     }
 
     // ───────────────────────── Segments and data ─────────────────────────
